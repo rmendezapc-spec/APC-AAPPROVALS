@@ -256,7 +256,7 @@
     margin-bottom: 5px;
   }
 
-  input[type=text], input[type=number], input[type=date], select, textarea {
+  input[type=text], input[type=number], input[type=date], input[type=password], select, textarea {
     width: 100%;
     padding: 8px 10px;
     border: 1px solid var(--line);
@@ -551,7 +551,7 @@
   @media (max-width: 640px), (pointer: coarse) {
     .btn { min-height: 40px; }
     .icon-btn { width: 42px; height: 42px; }
-    input[type=text], input[type=number], input[type=date], select, textarea {
+    input[type=text], input[type=number], input[type=date], input[type=password], select, textarea {
       padding: 10px 10px;
       font-size: 16px; /* prevents iOS Safari auto-zoom on focus */
     }
@@ -683,9 +683,15 @@
   // gets in — it has to actually establish a Firebase Auth session first,
   // same as this page does. Top-level await here delays this module's
   // completion (and therefore DOMContentLoaded) until sign-in resolves, so
-  // nothing below runs against Firestore before auth is ready.
+  // nothing below runs against Firestore before auth is ready. Raced against
+  // a timeout so a stuck sign-in can't block the whole gate from loading —
+  // Firestore calls below will just fail with a clear permission error
+  // instead, which the classic script surfaces on the gate screen.
   try {
-    await signInAnonymously(auth);
+    await Promise.race([
+      signInAnonymously(auth),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timed out')), 8000))
+    ]);
   } catch (e) {
     console.error('Anonymous sign-in failed:', e);
   }
@@ -828,12 +834,19 @@ function updateUserChrome() {
   if (manageBtn) manageBtn.style.display = isAdminUser(currentUser) ? '' : 'none';
 }
 
+let gateLoadError = '';
+
 function subscribeToUsersOnce() {
   return new Promise((resolve) => {
-    if (!window.__firebaseSubscribeUsers) { resolve(); return; }
+    if (!window.__firebaseSubscribeUsers) {
+      gateLoadError = 'Firebase failed to load in this browser.';
+      resolve();
+      return;
+    }
     let settled = false;
     window.__firebaseSubscribeUsers((users) => {
       allUsers = users;
+      gateLoadError = '';
       populateUserSelect();
       if (currentUser) {
         const updated = allUsers.find(u => u.id === currentUser.id);
@@ -841,7 +854,10 @@ function subscribeToUsersOnce() {
       }
       if (currentView !== 'form') render();
       if (!settled) { settled = true; resolve(); }
-    }, () => { if (!settled) { settled = true; resolve(); } });
+    }, (err) => {
+      gateLoadError = (err && err.message) || String(err);
+      if (!settled) { settled = true; resolve(); }
+    });
   });
 }
 
@@ -913,7 +929,13 @@ document.addEventListener('DOMContentLoaded', async function initGate() {
     try { await window.__firebaseSeedUsers(); } catch (e) {}
   }
   await subscribeToUsersOnce();
-  document.getElementById('gate-error').textContent = '';
+  if (gateLoadError) {
+    document.getElementById('gate-error').textContent = "Couldn't load the user list — " + gateLoadError + ' Try refreshing the page.';
+  } else if (allUsers.length === 0) {
+    document.getElementById('gate-error').textContent = 'No users found yet — try refreshing the page.';
+  } else {
+    document.getElementById('gate-error').textContent = '';
+  }
 
   let savedUserId = null;
   try { savedUserId = localStorage.getItem('apc_current_user_id'); } catch (e) {}
