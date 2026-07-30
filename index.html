@@ -436,6 +436,41 @@
   .approver-card .status-line { font-size: 12.5px; color: var(--muted); }
   .approver-card textarea { margin-top: 8px; }
 
+  .comment-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 340px;
+    overflow-y: auto;
+    margin-bottom: 14px;
+  }
+  .comment-empty { color: var(--muted); font-size: 13px; padding: 8px 0; }
+  .comment {
+    background: var(--panel-alt);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+    box-shadow: var(--shadow-xs);
+  }
+  .comment-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 4px;
+  }
+  .comment-author { font-weight: 700; font-size: 13px; }
+  .comment-time { font-size: 11px; color: var(--muted); }
+  .comment-text { font-size: 13.5px; white-space: pre-wrap; word-break: break-word; }
+
+  .comment-composer {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .comment-composer select { width: auto; min-width: 110px; flex: 0 0 auto; }
+  .comment-composer textarea { flex: 1 1 220px; min-height: 40px; }
+  .comment-composer .btn { flex: 0 0 auto; }
+
   .form-actions {
     display: flex;
     justify-content: flex-end;
@@ -800,6 +835,7 @@ const COST_TYPES = ['Labor','Material','Subcontractor','Equipment','Other','None
 const PROPERTY_TYPES = ['Single-Family','Multi-Family','New Construction','Remodel / Addition','Commercial'];
 const ACCESS_OPTIONS = ['Easy — full access','Moderate — some restrictions','Difficult — tight / crane needed'];
 const DEFAULT_SECTIONS = ['General Requirements','Labor & Installation','Materials & Products','Mobilization'];
+const CHAT_USERS = ['Sandy', 'Connor', 'Fidel'];
 
 let deals = [];
 let currentView = 'list';
@@ -808,6 +844,7 @@ let draftDeal = null;
 let currentDealId = null;
 let storageError = false;
 let storageErrorDetail = '';
+let chatComposerAuthor = CHAT_USERS[0];
 
 function uid(prefix) { return prefix + '_' + Date.now() + '_' + Math.floor(Math.random()*10000); }
 
@@ -822,6 +859,7 @@ function todayStr() {
 }
 
 let firebaseSubscribed = false;
+let openRejectBoxFor = null; // which approver's reject-reason box is open on the current detail view
 
 // Save a single deal document, used after every mutation (submit,
 // approve/reject, etc.) — only the changed deal is written, not the whole list.
@@ -887,6 +925,7 @@ function blankDeal() {
     attachments: [],
     approvals: { connor: null, sandy: null },
     rejectReasons: { connor: '', sandy: '' },
+    comments: [],
     createdAt: Date.now()
   };
 }
@@ -1027,6 +1066,12 @@ const App = {
   viewDeal(id) {
     currentDealId = id;
     currentView = 'detail';
+    openRejectBoxFor = null;
+    render();
+  },
+
+  openRejectBox(approver) {
+    openRejectBoxFor = approver;
     render();
   },
 
@@ -1216,6 +1261,7 @@ const App = {
     if (!d) return;
     d.approvals[approver] = value;
     if (value !== false) d.rejectReasons[approver] = '';
+    openRejectBoxFor = null;
     await saveDeal(d);
     currentView = 'detail';
     currentDealId = dealId;
@@ -1266,6 +1312,21 @@ const App = {
     const d = deals.find(x => x.id === dealId);
     if (!d) return;
     d.attachments = (d.attachments || []).filter(a => a.id !== attId);
+    await saveDeal(d);
+  },
+
+  setChatAuthor(author) {
+    chatComposerAuthor = author;
+  },
+
+  async postComment(dealId) {
+    const d = deals.find(x => x.id === dealId);
+    if (!d) return;
+    const input = document.getElementById('comment-input');
+    const text = (input.value || '').trim();
+    if (!text) return;
+    d.comments = d.comments || [];
+    d.comments.push({ id: uid('cmt'), author: chatComposerAuthor, text, createdAt: Date.now() });
     await saveDeal(d);
   }
 };
@@ -1507,6 +1568,14 @@ function renderDetail() {
       <div class="file-name">${esc(a.name)}</div>
     </div>`).join('');
 
+  const commentsHtml = (d.comments || []).length
+    ? (d.comments || []).map(c => `
+      <div class="comment">
+        <div class="comment-head"><span class="comment-author">${esc(c.author)}</span><span class="comment-time">${new Date(c.createdAt).toLocaleString()}</span></div>
+        <div class="comment-text">${esc(c.text)}</div>
+      </div>`).join('')
+    : `<div class="comment-empty">No messages yet — start the conversation.</div>`;
+
   function approverBlock(approver, label) {
     const val = d.approvals[approver];
     const reason = d.rejectReasons[approver] || '';
@@ -1517,10 +1586,10 @@ function renderDetail() {
       <div class="name">${label}</div>
       <div class="actions">
         <button class="btn btn-success btn-small" onclick="requireApproverUnlock('${approver}', () => App.setApproval('${d.id}','${approver}', true))">Approve</button>
-        <button class="btn btn-danger btn-small" onclick="requireApproverUnlock('${approver}', () => { document.getElementById('reason-${approver}').style.display='block'; })">Reject</button>
+        <button class="btn btn-danger btn-small" onclick="requireApproverUnlock('${approver}', () => App.openRejectBox('${approver}'))">Reject</button>
       </div>
       <div class="status-line">${statusLine}</div>
-      <div id="reason-${approver}" style="display:${val===false ? 'block':'none'};">
+      <div id="reason-${approver}" style="display:${openRejectBoxFor===approver ? 'block':'none'};">
         <textarea placeholder="Reason for rejection" oninput="App.updateRejectReason('${d.id}','${approver}', this.value)">${esc(reason)}</textarea>
         <button class="btn btn-outline btn-small" style="margin-top:6px;" onclick="requireApproverUnlock('${approver}', () => { App.setApproval('${d.id}','${approver}', false); App.saveRejectReason('${d.id}','${approver}'); })">Confirm Reject</button>
       </div>
@@ -1582,6 +1651,19 @@ function renderDetail() {
     <div class="approval-grid">
       ${approverBlock('connor', 'Connor')}
       ${approverBlock('sandy', 'Sandy')}
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Discussion</h2>
+    <div class="comment-list">${commentsHtml}</div>
+    <div class="comment-composer">
+      <select id="comment-author-select" onchange="App.setChatAuthor(this.value)">
+        ${CHAT_USERS.map(u => `<option value="${u}" ${u===chatComposerAuthor?'selected':''}>${u}</option>`).join('')}
+      </select>
+      <textarea id="comment-input" placeholder="Message about this deal..."
+        onkeydown="if(event.key==='Enter' && !event.shiftKey){ event.preventDefault(); App.postComment('${d.id}'); }"></textarea>
+      <button class="btn btn-primary btn-small" onclick="App.postComment('${d.id}')">Send</button>
     </div>
   </div>`;
 }
