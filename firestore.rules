@@ -21,5 +21,12 @@ service cloud.firestore {
     match /deals/{document=**} {
       allow read, write: if true;
     }
+    // Login accounts (name, PIN, role, approver slot). Note: since these
+    // rules have no real auth to check against, PINs stored here are
+    // readable by anyone with the project config — same trust model as
+    // everything else in this app, just worth knowing plainly.
+    match /users/{document=**} {
+      allow read, write: if true;
+    }
   }
 }

@@ -100,8 +100,15 @@
   header.topbar .nav {
     display: flex;
     justify-content: center;
+    align-items: center;
     flex-wrap: wrap;
     gap: 10px;
+  }
+
+  .current-user-label {
+    font-size: 12.5px;
+    color: #9FB0BC;
+    margin-right: 2px;
   }
 
   .btn {
@@ -467,9 +474,25 @@
     align-items: flex-start;
     flex-wrap: wrap;
   }
-  .comment-composer select { width: auto; min-width: 110px; flex: 0 0 auto; }
   .comment-composer textarea { flex: 1 1 220px; min-height: 40px; }
   .comment-composer .btn { flex: 0 0 auto; }
+
+  .user-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+  .user-row {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr 1.4fr auto;
+    gap: 10px;
+    align-items: center;
+  }
+  .user-row-head {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: var(--muted);
+    padding: 0 2px;
+  }
+  .user-role { font-size: 13px; color: var(--muted); }
+  .user-row-add { padding-top: 8px; border-top: 1px solid var(--line); }
 
   .form-actions {
     display: flex;
@@ -519,6 +542,9 @@
     header.topbar { padding: 14px 16px; }
     main { padding: 18px 12px 60px; }
     table.items { min-width: 900px; font-size: 12.5px; }
+    .user-row { grid-template-columns: 1fr 1fr; }
+    .user-row-head { display: none; }
+    .user-role { grid-column: 1 / -1; }
   }
 
   /* Touch-target sizing for phones and other coarse-pointer devices. */
@@ -576,7 +602,7 @@
     color: var(--muted);
     margin-bottom: 18px;
   }
-  #gate input[type=password] {
+  #gate select, #gate input[type=password] {
     text-align: center;
     letter-spacing: 1px;
     margin-bottom: 12px;
@@ -588,30 +614,6 @@
     min-height: 16px;
   }
   #gate .btn { width: 100%; }
-
-  #pin-modal-overlay {
-    display: none;
-    position: fixed;
-    inset: 0;
-    background: rgba(10,15,20,0.55);
-    z-index: 1000;
-    align-items: center;
-    justify-content: center;
-    padding: 20px;
-  }
-  .pin-modal {
-    background: var(--paper);
-    border-radius: var(--radius);
-    padding: 24px 24px 20px;
-    max-width: 320px;
-    width: 100%;
-    text-align: center;
-    box-shadow: var(--shadow-lg);
-  }
-  .pin-modal .title { font-size: 16px; font-weight: 700; margin-bottom: 12px; }
-  .pin-modal input[type=password] { text-align: center; letter-spacing: 1px; margin-bottom: 12px; }
-  .pin-modal-actions { display: flex; gap: 8px; }
-  .pin-modal-actions .btn { flex: 1; }
 </style>
 </head>
 <body>
@@ -620,10 +622,11 @@
   <div class="gate-card">
     <img src="fence-installers-logo.png" alt="Fence Installers" class="brand-logo">
     <div class="title">Deal Approval Board</div>
-    <div class="subtitle">Enter the team passphrase to continue</div>
+    <div class="subtitle">Sign in to continue</div>
     <div class="gate-error" id="gate-error"></div>
-    <input type="password" id="gate-input" placeholder="Passphrase" onkeydown="if(event.key==='Enter') checkPassphrase()">
-    <button class="btn btn-primary" onclick="checkPassphrase()">Unlock</button>
+    <select id="login-user-select"></select>
+    <input type="password" id="login-pin-input" placeholder="PIN" onkeydown="if(event.key==='Enter') attemptLogin()">
+    <button class="btn btn-primary" onclick="attemptLogin()">Log In</button>
   </div>
 </div>
 
@@ -637,9 +640,12 @@
     <div class="subtitle">Residential sales &mdash; cost breakdown &amp; sign-off</div>
   </div>
   <div class="nav">
+    <span class="current-user-label" id="current-user-label"></span>
+    <button class="btn btn-outline btn-small" id="manage-users-btn" onclick="App.goManageUsers()" style="display:none;">Manage Users</button>
     <button class="btn btn-ghost icon-btn" id="theme-toggle-btn" onclick="toggleTheme()" title="Toggle day/night mode">🌙</button>
     <button class="btn btn-ghost" onclick="App.goList()">All Deals</button>
     <button class="btn btn-primary" onclick="App.goNewDeal()">+ New Deal</button>
+    <button class="btn btn-outline btn-small" onclick="logout()">Log Out</button>
   </div>
 </header>
 
@@ -651,21 +657,9 @@
   <img id="lightbox-img" src="" alt="Attachment preview">
 </div>
 
-<div id="pin-modal-overlay">
-  <div class="pin-modal">
-    <div class="title" id="pin-modal-title">Enter PIN</div>
-    <div class="gate-error" id="pin-modal-error"></div>
-    <input type="password" id="pin-modal-input" placeholder="PIN" onkeydown="if(event.key==='Enter') submitPinModal(); if(event.key==='Escape') closePinModal();">
-    <div class="pin-modal-actions">
-      <button class="btn btn-outline" onclick="closePinModal()">Cancel</button>
-      <button class="btn btn-primary" onclick="submitPinModal()">Unlock</button>
-    </div>
-  </div>
-</div>
-
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
-  import { getFirestore, collection, doc, setDoc, getDoc, getDocs, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+  import { getFirestore, collection, doc, setDoc, deleteDoc, getDoc, getDocs, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyDDHjIX-V_DwizD85TzwvcjuDPu1lMZoSc",
@@ -684,6 +678,7 @@
   // by the `deals` collection below, kept only as a one-time migration source.
   const legacyDocRef = doc(db, 'apcDealBoard', 'deals');
   const dealsCollRef = collection(db, 'deals');
+  const usersCollRef = collection(db, 'users');
 
   // Each deal is its own document, keyed by the deal's own id. This avoids the
   // 1MB single-document cap and the "last write wins, whole list" concurrency
@@ -729,53 +724,141 @@
       console.error('Legacy migration failed:', e);
     }
   };
+
+  // User accounts (login identity + approver slot + role). Same lightweight
+  // trust model as everything else in this app — no real auth, just a named
+  // PIN check — but it replaces the old shared passphrase + per-approver PIN
+  // scheme with one login that also drives who can approve/reject and post
+  // chat messages as themselves.
+  window.__firebaseSaveUser = async function (user) {
+    try {
+      await setDoc(doc(usersCollRef, user.id), user);
+      return { ok: true };
+    } catch (e) {
+      console.error('Firestore save user failed:', e);
+      return { ok: false, error: (e && e.message) || String(e) };
+    }
+  };
+
+  window.__firebaseDeleteUser = async function (userId) {
+    try {
+      await deleteDoc(doc(usersCollRef, userId));
+      return { ok: true };
+    } catch (e) {
+      console.error('Firestore delete user failed:', e);
+      return { ok: false, error: (e && e.message) || String(e) };
+    }
+  };
+
+  window.__firebaseSubscribeUsers = function (onData, onError) {
+    onSnapshot(usersCollRef, (snap) => {
+      const arr = [];
+      snap.forEach((d) => arr.push(d.data()));
+      onData(arr);
+    }, (err) => {
+      console.error('Firestore listen error (users):', err);
+      if (onError) onError(err);
+    });
+  };
+
+  // One-time seed of the base accounts (Sandy and Connor as the two fixed
+  // approver seats, Fidel as a rep) — a no-op once the collection has any
+  // users in it, same pattern as the deals migration above.
+  window.__firebaseSeedUsers = async function () {
+    try {
+      const existing = await getDocs(usersCollRef);
+      if (!existing.empty) return;
+      const seed = [
+        { id: 'usr_sandy', name: 'Sandy', pin: 'SANDY888', role: 'approver', approverSlot: 'sandy', createdAt: Date.now() },
+        { id: 'usr_connor', name: 'Connor', pin: 'CONNOR2385', role: 'approver', approverSlot: 'connor', createdAt: Date.now() },
+        { id: 'usr_fidel', name: 'Fidel', pin: 'FIDEL1234', role: 'rep', approverSlot: null, createdAt: Date.now() }
+      ];
+      for (const user of seed) {
+        await setDoc(doc(usersCollRef, user.id), user);
+      }
+    } catch (e) {
+      console.error('User seed failed:', e);
+    }
+  };
 </script>
 
 <script>
-const TEAM_PASSPHRASE = 'PLUTUS';
+// User accounts — same lightweight, client-side trust model as everything
+// else in this app (no real backend auth, just a named PIN check). Replaces
+// the old shared team passphrase and separate per-approver PIN modal: one
+// login now gates the app, drives who can approve/reject, and attributes
+// chat messages automatically.
+let allUsers = [];
+let currentUser = null;
 
-// Per-approver PINs — same lightweight, client-side trust model as
-// TEAM_PASSPHRASE above (a deterrent, not real security). Change these to
-// whatever Connor and Sandy want before relying on them.
-const APPROVER_PINS = { connor: 'CONNOR2385', sandy: 'SANDY888' };
-const APPROVER_LABELS = { connor: 'Connor', sandy: 'Sandy' };
-
-let pendingPinAction = null;
-
-function requireApproverUnlock(approver, action) {
-  let unlocked = false;
-  try { unlocked = localStorage.getItem('apc_approver_unlocked_' + approver) === 'yes'; } catch (e) {}
-  if (unlocked) { action(); return; }
-  pendingPinAction = action;
-  const input = document.getElementById('pin-modal-input');
-  document.getElementById('pin-modal-title').textContent = "Enter " + APPROVER_LABELS[approver] + "'s PIN";
-  document.getElementById('pin-modal-error').textContent = '';
-  input.value = '';
-  input.dataset.approver = approver;
-  document.getElementById('pin-modal-overlay').style.display = 'flex';
-  setTimeout(() => input.focus(), 30);
+function populateUserSelect() {
+  const select = document.getElementById('login-user-select');
+  if (!select) return;
+  const prevValue = select.value;
+  select.innerHTML = allUsers.map(u => `<option value="${u.id}">${u.name}</option>`).join('');
+  if (prevValue && allUsers.some(u => u.id === prevValue)) select.value = prevValue;
 }
 
-function closePinModal() {
-  document.getElementById('pin-modal-overlay').style.display = 'none';
-  pendingPinAction = null;
+function updateUserChrome() {
+  const label = document.getElementById('current-user-label');
+  if (label) label.textContent = currentUser ? ('Logged in as ' + currentUser.name) : '';
+  const manageBtn = document.getElementById('manage-users-btn');
+  if (manageBtn) manageBtn.style.display = (currentUser && currentUser.role === 'approver') ? '' : 'none';
 }
 
-function submitPinModal() {
-  const input = document.getElementById('pin-modal-input');
-  const approver = input.dataset.approver;
-  const val = (input.value || '').trim();
-  if (val.toUpperCase() === (APPROVER_PINS[approver] || '').toUpperCase()) {
-    try { localStorage.setItem('apc_approver_unlocked_' + approver, 'yes'); } catch (e) {}
-    document.getElementById('pin-modal-overlay').style.display = 'none';
-    const action = pendingPinAction;
-    pendingPinAction = null;
-    if (action) action();
-  } else {
-    document.getElementById('pin-modal-error').textContent = 'Incorrect PIN — try again.';
-    input.value = '';
-    input.focus();
+function subscribeToUsersOnce() {
+  return new Promise((resolve) => {
+    if (!window.__firebaseSubscribeUsers) { resolve(); return; }
+    let settled = false;
+    window.__firebaseSubscribeUsers((users) => {
+      allUsers = users;
+      populateUserSelect();
+      if (currentUser) {
+        const updated = allUsers.find(u => u.id === currentUser.id);
+        if (updated) { currentUser = updated; updateUserChrome(); }
+      }
+      if (currentView !== 'form') render();
+      if (!settled) { settled = true; resolve(); }
+    }, () => { if (!settled) { settled = true; resolve(); } });
+  });
+}
+
+function attemptLogin() {
+  const select = document.getElementById('login-user-select');
+  const pinInput = document.getElementById('login-pin-input');
+  const user = allUsers.find(u => u.id === select.value);
+  const val = (pinInput.value || '').trim();
+  if (!user || val.toUpperCase() !== (user.pin || '').toUpperCase()) {
+    document.getElementById('gate-error').textContent = 'Incorrect PIN — try again.';
+    pinInput.value = '';
+    pinInput.focus();
+    return;
   }
+  currentUser = user;
+  try { localStorage.setItem('apc_current_user_id', user.id); } catch (e) {}
+  enterApp();
+}
+
+function enterApp() {
+  document.getElementById('gate').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+  updateUserChrome();
+  initApp();
+  render();
+}
+
+function logout() {
+  currentUser = null;
+  try { localStorage.removeItem('apc_current_user_id'); } catch (e) {}
+  updateUserChrome();
+  currentView = 'list';
+  currentDealId = null;
+  openRejectBoxFor = null;
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('gate').style.display = 'flex';
+  const pinInput = document.getElementById('login-pin-input');
+  if (pinInput) pinInput.value = '';
+  document.getElementById('gate-error').textContent = '';
 }
 
 function applyTheme(theme) {
@@ -802,30 +885,22 @@ function initTheme() {
 
 initTheme();
 
-function checkPassphrase() {
-  const input = document.getElementById('gate-input');
-  const val = (input.value || '').trim();
-  if (val.toUpperCase() === TEAM_PASSPHRASE.toUpperCase()) {
-    try { localStorage.setItem('apc_deal_board_unlocked', 'yes'); } catch (e) {}
-    document.getElementById('gate').style.display = 'none';
-    document.getElementById('app').style.display = 'block';
-    initApp();
-  } else {
-    document.getElementById('gate-error').textContent = 'That\'s not the right passphrase — try again.';
-    input.value = '';
-    input.focus();
+document.addEventListener('DOMContentLoaded', async function initGate() {
+  document.getElementById('gate-error').textContent = 'Loading users…';
+  if (window.__firebaseSeedUsers) {
+    try { await window.__firebaseSeedUsers(); } catch (e) {}
   }
-}
+  await subscribeToUsersOnce();
+  document.getElementById('gate-error').textContent = '';
 
-document.addEventListener('DOMContentLoaded', function checkGateOnLoad() {
-  let unlocked = false;
-  try { unlocked = localStorage.getItem('apc_deal_board_unlocked') === 'yes'; } catch (e) {}
-  if (unlocked) {
-    document.getElementById('gate').style.display = 'none';
-    document.getElementById('app').style.display = 'block';
-    initApp();
+  let savedUserId = null;
+  try { savedUserId = localStorage.getItem('apc_current_user_id'); } catch (e) {}
+  const saved = allUsers.find(u => u.id === savedUserId);
+  if (saved) {
+    currentUser = saved;
+    enterApp();
   } else {
-    document.getElementById('gate-input').focus();
+    document.getElementById('login-pin-input').focus();
   }
 });
 </script>
@@ -835,7 +910,6 @@ const COST_TYPES = ['Labor','Material','Subcontractor','Equipment','Other','None
 const PROPERTY_TYPES = ['Single-Family','Multi-Family','New Construction','Remodel / Addition','Commercial'];
 const ACCESS_OPTIONS = ['Easy — full access','Moderate — some restrictions','Difficult — tight / crane needed'];
 const DEFAULT_SECTIONS = ['General Requirements','Labor & Installation','Materials & Products','Mobilization'];
-const CHAT_USERS = ['Sandy', 'Connor', 'Fidel'];
 
 let deals = [];
 let currentView = 'list';
@@ -844,7 +918,6 @@ let draftDeal = null;
 let currentDealId = null;
 let storageError = false;
 let storageErrorDetail = '';
-let chatComposerAuthor = CHAT_USERS[0];
 
 function uid(prefix) { return prefix + '_' + Date.now() + '_' + Math.floor(Math.random()*10000); }
 
@@ -1054,6 +1127,12 @@ const App = {
     render();
   },
 
+  goManageUsers() {
+    if (!currentUser || currentUser.role !== 'approver') return;
+    currentView = 'users';
+    render();
+  },
+
   editDeal(id) {
     const d = deals.find(x => x.id === id);
     if (!d) return;
@@ -1071,6 +1150,7 @@ const App = {
   },
 
   openRejectBox(approver) {
+    if (!currentUser || currentUser.approverSlot !== approver) return;
     openRejectBoxFor = approver;
     render();
   },
@@ -1257,6 +1337,7 @@ const App = {
   },
 
   async setApproval(dealId, approver, value) {
+    if (!currentUser || currentUser.approverSlot !== approver) return;
     const d = deals.find(x => x.id === dealId);
     if (!d) return;
     d.approvals[approver] = value;
@@ -1315,19 +1396,70 @@ const App = {
     await saveDeal(d);
   },
 
-  setChatAuthor(author) {
-    chatComposerAuthor = author;
-  },
-
   async postComment(dealId) {
+    if (!currentUser) return;
     const d = deals.find(x => x.id === dealId);
     if (!d) return;
     const input = document.getElementById('comment-input');
     const text = (input.value || '').trim();
     if (!text) return;
     d.comments = d.comments || [];
-    d.comments.push({ id: uid('cmt'), author: chatComposerAuthor, text, createdAt: Date.now() });
+    d.comments.push({ id: uid('cmt'), author: currentUser.name, text, createdAt: Date.now() });
+    input.value = '';
     await saveDeal(d);
+  },
+
+  // Manage Users is only reachable via goManageUsers, which already checks
+  // this, but these are re-checked here too since they mutate shared data.
+  updateUserField(userId, field, value) {
+    if (!currentUser || currentUser.role !== 'approver') return;
+    const u = allUsers.find(x => x.id === userId);
+    if (u) u[field] = value;
+  },
+
+  async saveUserField(userId) {
+    if (!currentUser || currentUser.role !== 'approver') return;
+    const u = allUsers.find(x => x.id === userId);
+    if (!u || !window.__firebaseSaveUser) return;
+    await window.__firebaseSaveUser(u);
+    render();
+  },
+
+  async addUser() {
+    if (!currentUser || currentUser.role !== 'approver') return;
+    const nameInput = document.getElementById('new-user-name');
+    const pinInput = document.getElementById('new-user-pin');
+    const name = (nameInput.value || '').trim();
+    const pin = (pinInput.value || '').trim();
+    if (!name || !pin) {
+      alert('Enter a name and a PIN for the new user.');
+      return;
+    }
+    if (allUsers.some(u => u.name.toLowerCase() === name.toLowerCase())) {
+      alert('A user named "' + name + '" already exists.');
+      return;
+    }
+    const user = { id: uid('usr'), name, pin, role: 'rep', approverSlot: null, createdAt: Date.now() };
+    if (window.__firebaseSaveUser) await window.__firebaseSaveUser(user);
+    nameInput.value = '';
+    pinInput.value = '';
+    render();
+  },
+
+  async removeUser(userId) {
+    if (!currentUser || currentUser.role !== 'approver') return;
+    const u = allUsers.find(x => x.id === userId);
+    if (!u) return;
+    if (u.id === currentUser.id) {
+      alert("You can't remove your own account while logged in as them.");
+      return;
+    }
+    const warning = u.approverSlot
+      ? (u.name + ' is the ' + (u.approverSlot === 'connor' ? 'Connor' : 'Sandy') + ' approver account — removing it means no one can approve or reject in that slot. Continue?')
+      : ('Remove ' + u.name + '? They will no longer be able to log in.');
+    if (!confirm(warning)) return;
+    if (window.__firebaseDeleteUser) await window.__firebaseDeleteUser(userId);
+    render();
   }
 };
 
@@ -1337,6 +1469,7 @@ function render() {
   if (currentView === 'list') main.innerHTML = renderList();
   else if (currentView === 'form') main.innerHTML = renderForm();
   else if (currentView === 'detail') main.innerHTML = renderDetail();
+  else if (currentView === 'users') main.innerHTML = renderUsers();
 }
 
 function renderList() {
@@ -1576,23 +1709,28 @@ function renderDetail() {
       </div>`).join('')
     : `<div class="comment-empty">No messages yet — start the conversation.</div>`;
 
-  function approverBlock(approver, label) {
+  function approverBlock(approver) {
+    const approverUser = allUsers.find(u => u.approverSlot === approver);
+    const label = approverUser ? approverUser.name : (approver === 'connor' ? 'Connor' : 'Sandy');
     const val = d.approvals[approver];
     const reason = d.rejectReasons[approver] || '';
     let statusLine = 'Awaiting decision';
     if (val === true) statusLine = 'Approved';
     if (val === false) statusLine = 'Rejected' + (reason ? ': ' + esc(reason) : '');
-    return `<div class="approver-card">
-      <div class="name">${label}</div>
+    const canAct = currentUser && currentUser.approverSlot === approver;
+    const actionsHtml = canAct ? `
       <div class="actions">
-        <button class="btn btn-success btn-small" onclick="requireApproverUnlock('${approver}', () => App.setApproval('${d.id}','${approver}', true))">Approve</button>
-        <button class="btn btn-danger btn-small" onclick="requireApproverUnlock('${approver}', () => App.openRejectBox('${approver}'))">Reject</button>
+        <button class="btn btn-success btn-small" onclick="App.setApproval('${d.id}','${approver}', true)">Approve</button>
+        <button class="btn btn-danger btn-small" onclick="App.openRejectBox('${approver}')">Reject</button>
       </div>
       <div class="status-line">${statusLine}</div>
       <div id="reason-${approver}" style="display:${openRejectBoxFor===approver ? 'block':'none'};">
         <textarea placeholder="Reason for rejection" oninput="App.updateRejectReason('${d.id}','${approver}', this.value)">${esc(reason)}</textarea>
-        <button class="btn btn-outline btn-small" style="margin-top:6px;" onclick="requireApproverUnlock('${approver}', () => { App.setApproval('${d.id}','${approver}', false); App.saveRejectReason('${d.id}','${approver}'); })">Confirm Reject</button>
-      </div>
+        <button class="btn btn-outline btn-small" style="margin-top:6px;" onclick="App.setApproval('${d.id}','${approver}', false); App.saveRejectReason('${d.id}','${approver}')">Confirm Reject</button>
+      </div>` : `<div class="status-line">${statusLine}</div>`;
+    return `<div class="approver-card">
+      <div class="name">${esc(label)}</div>
+      ${actionsHtml}
     </div>`;
   }
 
@@ -1649,8 +1787,8 @@ function renderDetail() {
   <div class="panel">
     <h2>Approval</h2>
     <div class="approval-grid">
-      ${approverBlock('connor', 'Connor')}
-      ${approverBlock('sandy', 'Sandy')}
+      ${approverBlock('connor')}
+      ${approverBlock('sandy')}
     </div>
   </div>
 
@@ -1658,13 +1796,49 @@ function renderDetail() {
     <h2>Discussion</h2>
     <div class="comment-list">${commentsHtml}</div>
     <div class="comment-composer">
-      <select id="comment-author-select" onchange="App.setChatAuthor(this.value)">
-        ${CHAT_USERS.map(u => `<option value="${u}" ${u===chatComposerAuthor?'selected':''}>${u}</option>`).join('')}
-      </select>
-      <textarea id="comment-input" placeholder="Message about this deal..."
+      <textarea id="comment-input" placeholder="Message about this deal, posting as ${esc(currentUser ? currentUser.name : '')}..."
         onkeydown="if(event.key==='Enter' && !event.shiftKey){ event.preventDefault(); App.postComment('${d.id}'); }"></textarea>
       <button class="btn btn-primary btn-small" onclick="App.postComment('${d.id}')">Send</button>
     </div>
+  </div>`;
+}
+
+function renderUsers() {
+  if (!currentUser || currentUser.role !== 'approver') {
+    return `<div class="empty-state">You don't have access to this page.<div class="back-link" onclick="App.goList()">&larr; Back</div></div>`;
+  }
+
+  const rows = allUsers.map(u => {
+    const roleLabel = u.approverSlot
+      ? ('Approver — ' + (u.approverSlot === 'connor' ? "Connor's seat" : "Sandy's seat"))
+      : 'Rep';
+    return `<div class="user-row">
+      <input type="text" value="${esc(u.name)}" class="user-name-input"
+        onchange="App.updateUserField('${u.id}','name', this.value); App.saveUserField('${u.id}')">
+      <input type="text" value="${esc(u.pin)}" class="user-pin-input" placeholder="PIN"
+        onchange="App.updateUserField('${u.id}','pin', this.value); App.saveUserField('${u.id}')">
+      <div class="user-role">${roleLabel}</div>
+      <button class="btn btn-danger btn-small" onclick="App.removeUser('${u.id}')">Remove</button>
+    </div>`;
+  }).join('');
+
+  return `
+  <div class="back-link" onclick="App.goList()">&larr; Back to all deals</div>
+  <div class="panel">
+    <h2>Manage Users</h2>
+    <div class="user-list">
+      <div class="user-row user-row-head">
+        <div>Name</div><div>PIN</div><div>Role</div><div></div>
+      </div>
+      ${rows}
+    </div>
+    <div class="user-row user-row-add">
+      <input type="text" id="new-user-name" placeholder="New user's name">
+      <input type="text" id="new-user-pin" placeholder="PIN">
+      <div></div>
+      <button class="btn btn-primary btn-small" onclick="App.addUser()">Add User</button>
+    </div>
+    <p class="attach-hint" style="margin-top:10px;">New users are added as Reps — they can submit deals, edit their own rejected deals, and post in Discussion, but can't approve or reject. Only Connor and Sandy's own seats can approve; rename either account above to hand that seat to someone else.</p>
   </div>`;
 }
 
