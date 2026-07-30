@@ -70,9 +70,8 @@
     color: #fff;
     padding: 18px 28px;
     display: flex;
+    flex-direction: column;
     align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
     gap: 12px;
     box-shadow: var(--shadow-md);
     position: relative;
@@ -82,7 +81,9 @@
   header.topbar .brand {
     display: flex;
     flex-direction: column;
+    align-items: center;
     gap: 2px;
+    text-align: center;
   }
 
   header.topbar .brand .title {
@@ -98,6 +99,8 @@
 
   header.topbar .nav {
     display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
     gap: 10px;
   }
 
@@ -135,28 +138,6 @@
     justify-content: center;
     font-size: 16px;
   }
-
-  .mode-toggle {
-    display: flex;
-    border: 1px solid rgba(255,255,255,0.35);
-    border-radius: var(--radius);
-    overflow: hidden;
-    box-shadow: inset 0 1px 3px rgba(0,0,0,0.25);
-  }
-  .mode-btn {
-    background: transparent;
-    border: none;
-    color: #fff;
-    padding: 0 12px;
-    height: 38px;
-    font-size: 12.5px;
-    font-weight: 600;
-    cursor: pointer;
-    font-family: var(--sans);
-  }
-  .mode-btn + .mode-btn { border-left: 1px solid rgba(255,255,255,0.35); }
-  .mode-btn.active { background: var(--amber); }
-  .mode-btn:hover:not(.active) { background: rgba(255,255,255,0.12); }
 
   main {
     max-width: min(1500px, 96vw);
@@ -494,9 +475,7 @@
     margin-bottom: 14px;
   }
 
-  /* Real narrow devices get the same phone-optimized treatment as the manual
-     "Mobile" toggle below, so Auto mode is genuinely optimized for the phones
-     this app is mostly used from, not just a fallback. */
+  /* Real device width drives layout directly — no manual override needed. */
   @media (max-width: 640px) {
     .approval-grid { grid-template-columns: 1fr; }
     .field-grid { grid-template-columns: 1fr; }
@@ -504,43 +483,19 @@
     .totals-bar { flex-direction: column; align-items: flex-start; gap: 10px; }
     header.topbar { padding: 14px 16px; }
     main { padding: 18px 12px 60px; }
+    table.items { min-width: 900px; font-size: 12.5px; }
   }
 
-  /* Touch-target sizing shared by real narrow devices and the manual Mobile
-     toggle — phones need bigger tap targets than a mouse-driven desktop. */
+  /* Touch-target sizing for phones and other coarse-pointer devices. */
   @media (max-width: 640px), (pointer: coarse) {
-    body.force-mobile .btn, body:not(.force-desktop) .btn { min-height: 40px; }
-    body.force-mobile .icon-btn, body:not(.force-desktop) .icon-btn { width: 42px; height: 42px; }
-    body.force-mobile input[type=text], body.force-mobile input[type=number],
-    body.force-mobile input[type=date], body.force-mobile select, body.force-mobile textarea,
-    body:not(.force-desktop) input[type=text], body:not(.force-desktop) input[type=number],
-    body:not(.force-desktop) input[type=date], body:not(.force-desktop) select, body:not(.force-desktop) textarea {
+    .btn { min-height: 40px; }
+    .icon-btn { width: 42px; height: 42px; }
+    input[type=text], input[type=number], input[type=date], select, textarea {
       padding: 10px 10px;
       font-size: 16px; /* prevents iOS Safari auto-zoom on focus */
     }
-    body.force-mobile .tab, body:not(.force-desktop) .tab { padding: 11px 14px; }
+    .tab { padding: 11px 14px; }
   }
-
-  /* Manual view-mode override, independent of actual device width */
-  body.force-mobile #app {
-    max-width: 480px;
-    margin: 0 auto;
-    box-shadow: var(--shadow-lg);
-    min-height: 100vh;
-  }
-  body.force-mobile .approval-grid { grid-template-columns: 1fr !important; }
-  body.force-mobile .field-grid { grid-template-columns: 1fr !important; }
-  body.force-mobile header.topbar { padding: 14px 16px !important; }
-  body.force-mobile main { padding: 18px 12px 60px !important; }
-  body.force-mobile .totals-bar { flex-direction: column; align-items: flex-start; gap: 10px; }
-  body.force-mobile .job-site-summary { grid-template-columns: 1fr !important; }
-  body.force-mobile table.items { min-width: 900px; font-size: 12.5px; }
-
-  body.force-desktop .approval-grid { grid-template-columns: 1fr 1fr !important; }
-  body.force-desktop .field-grid { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)) !important; }
-  body.force-desktop header.topbar { padding: 18px 28px !important; }
-  body.force-desktop main { padding: 28px 24px 80px !important; }
-  body.force-desktop .job-site-summary { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)) !important; }
 
   #gate {
     min-height: 100vh;
@@ -558,6 +513,23 @@
     width: 100%;
     text-align: center;
     box-shadow: var(--shadow-lg);
+  }
+
+  .brand-strip {
+    background: #000;
+    display: flex;
+    justify-content: center;
+    padding: 14px 16px;
+  }
+  .brand-logo {
+    display: block;
+    width: 100%;
+    max-width: 280px;
+    height: auto;
+  }
+  #gate .gate-card .brand-logo {
+    max-width: 220px;
+    margin: 0 auto 20px;
   }
   #gate .gate-card .title {
     font-size: 18px;
@@ -611,6 +583,7 @@
 
 <div id="gate">
   <div class="gate-card">
+    <img src="fence-installers-logo.png" alt="Fence Installers" class="brand-logo">
     <div class="title">Deal Approval Board</div>
     <div class="subtitle">Enter the team passphrase to continue</div>
     <div class="gate-error" id="gate-error"></div>
@@ -620,17 +593,15 @@
 </div>
 
 <div id="app" style="display:none;">
+<div class="brand-strip">
+  <img src="fence-installers-logo.png" alt="Fence Installers" class="brand-logo">
+</div>
 <header class="topbar">
   <div class="brand">
     <div class="title">Deal Approval Board</div>
     <div class="subtitle">Residential sales &mdash; cost breakdown &amp; sign-off</div>
   </div>
   <div class="nav">
-    <div class="mode-toggle" role="group" aria-label="View mode">
-      <button class="mode-btn" data-mode="auto" onclick="setViewMode('auto')">Auto</button>
-      <button class="mode-btn" data-mode="mobile" onclick="setViewMode('mobile')">Mobile</button>
-      <button class="mode-btn" data-mode="desktop" onclick="setViewMode('desktop')">Web</button>
-    </div>
     <button class="btn btn-ghost icon-btn" id="theme-toggle-btn" onclick="toggleTheme()" title="Toggle day/night mode">🌙</button>
     <button class="btn btn-ghost" onclick="App.goList()">All Deals</button>
     <button class="btn btn-primary" onclick="App.goNewDeal()">+ New Deal</button>
@@ -794,26 +765,7 @@ function initTheme() {
   applyTheme(theme);
 }
 
-function applyViewMode(mode) {
-  document.body.classList.remove('force-mobile', 'force-desktop');
-  if (mode === 'mobile') document.body.classList.add('force-mobile');
-  if (mode === 'desktop') document.body.classList.add('force-desktop');
-  document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
-}
-
-function setViewMode(mode) {
-  try { localStorage.setItem('apc_view_mode', mode); } catch (e) {}
-  applyViewMode(mode);
-}
-
-function initViewMode() {
-  let mode = 'auto';
-  try { mode = localStorage.getItem('apc_view_mode') || 'auto'; } catch (e) {}
-  applyViewMode(mode);
-}
-
 initTheme();
-initViewMode();
 
 function checkPassphrase() {
   const input = document.getElementById('gate-input');
