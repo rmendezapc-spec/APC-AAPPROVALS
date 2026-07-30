@@ -587,27 +587,28 @@
   window.__firebaseSaveDeals = async function (dealsArray) {
     try {
       await setDoc(dealsDocRef, { data: JSON.stringify(dealsArray), updatedAt: Date.now() });
-      return true;
+      return { ok: true };
     } catch (e) {
       console.error('Firestore save failed:', e);
-      return false;
+      return { ok: false, error: (e && e.message) || String(e) };
     }
   };
 
   // Real-time subscription — fires immediately with current data, then again
   // any time ANYONE (any device) changes it, so the app stays live without
   // needing a manual refresh.
-  window.__firebaseSubscribe = function (callback) {
+  window.__firebaseSubscribe = function (onData, onError) {
     onSnapshot(dealsDocRef, (snap) => {
       try {
         const parsed = snap.exists() ? JSON.parse(snap.data().data || '[]') : [];
-        callback(parsed);
+        onData(parsed);
       } catch (e) {
         console.error('Firestore parse failed:', e);
-        callback([]);
+        onData([]);
       }
     }, (err) => {
       console.error('Firestore listen error:', err);
+      if (onError) onError(err);
     });
   };
 </script>
@@ -698,6 +699,7 @@ let currentFilter = 'all';
 let draftDeal = null;
 let currentDealId = null;
 let storageError = false;
+let storageErrorDetail = '';
 
 function uid(prefix) { return prefix + '_' + Date.now() + '_' + Math.floor(Math.random()*10000); }
 
@@ -716,32 +718,48 @@ let firebaseSubscribed = false;
 // One-off save, used after every mutation (submit, approve/reject, etc.)
 async function saveDeals() {
   try {
-    const ok = window.__firebaseSaveDeals ? await window.__firebaseSaveDeals(deals) : false;
-    storageError = !ok;
+    const result = window.__firebaseSaveDeals
+      ? await window.__firebaseSaveDeals(deals)
+      : { ok: false, error: 'Firebase failed to load in this browser.' };
+    storageError = !result.ok;
+    storageErrorDetail = result.ok ? '' : (result.error || '');
   } catch (e) {
     storageError = true;
+    storageErrorDetail = (e && e.message) || String(e);
   }
   render();
 }
 
 // Subscribes once to the shared Firestore document. Resolves after the
-// first snapshot arrives so initApp can render real data on first paint,
-// then keeps updating `deals` live as anyone (any device) makes changes.
+// first snapshot arrives (or the first error) so initApp never hangs on
+// "Loading deals..." forever, then keeps updating `deals` live as anyone
+// (any device) makes changes.
 function subscribeToDealsOnce() {
   return new Promise((resolve) => {
     if (!window.__firebaseSubscribe) {
       // Firebase script failed to load (offline, blocked, bad config, etc.)
       storageError = true;
+      storageErrorDetail = 'Firebase failed to load in this browser.';
       resolve();
       return;
     }
-    let firstSnapshotHandled = false;
+    let settled = false;
     window.__firebaseSubscribe((remoteDeals) => {
       deals = remoteDeals;
+      storageError = false;
+      storageErrorDetail = '';
       if (currentView === 'list' || currentView === 'detail') render();
-      if (!firstSnapshotHandled) {
-        firstSnapshotHandled = true;
+      if (!settled) {
+        settled = true;
         firebaseSubscribed = true;
+        resolve();
+      }
+    }, (err) => {
+      storageError = true;
+      storageErrorDetail = (err && err.message) || String(err);
+      render();
+      if (!settled) {
+        settled = true;
         resolve();
       }
     });
@@ -1148,7 +1166,7 @@ function renderList() {
     }).join('');
   }
 
-  const errBanner = storageError ? `<div class="banner">Something went wrong saving your last change. Try again — if it keeps happening, this device may be offline.</div>` : '';
+  const errBanner = storageError ? `<div class="banner">Something went wrong saving your last change. Try again — if it keeps happening, this device may be offline.${storageErrorDetail ? `<div style="margin-top:5px; font-size:11.5px; opacity:0.8;">Details: ${esc(storageErrorDetail)}</div>` : ''}</div>` : '';
 
   return `${errBanner}<div class="tabs">${tabs}</div>${body}`;
 }

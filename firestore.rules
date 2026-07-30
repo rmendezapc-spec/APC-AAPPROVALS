@@ -1,0 +1,19 @@
+rules_version = '2';
+
+// Reference copy of the security rules for the apc-approvals Firestore project.
+// This repo has no Firebase CLI/deploy pipeline (see BUILDHANDOFF.md §7) — paste
+// this into Firebase Console -> Build -> Firestore Database -> Rules tab manually.
+//
+// Unlike the console's default "test mode" rules, this has no expiration
+// clause, so it will not silently start denying all reads/writes after 30 days.
+//
+// Note: there is no Firebase Auth in this app (see BUILDHANDOFF.md §6), so this
+// is still open read/write to anyone with the project config, same trust model
+// as test mode — just without the time bomb. Revisit if real user auth is added.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /apcDealBoard/{document=**} {
+      allow read, write: if true;
+    }
+  }
+}
