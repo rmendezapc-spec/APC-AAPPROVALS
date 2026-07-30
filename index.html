@@ -923,12 +923,32 @@ function initTheme() {
 
 initTheme();
 
+// Don't assume the type="module" script (which has a top-level await for
+// anonymous sign-in) has finished defining window.__firebase* by the time
+// DOMContentLoaded fires — that ordering isn't reliable in every browser.
+// Poll for it instead of racing it.
+function waitForFirebaseBridge(timeoutMs) {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    (function check() {
+      if (window.__firebaseSubscribeUsers) { resolve(true); return; }
+      if (Date.now() - start > timeoutMs) { resolve(false); return; }
+      setTimeout(check, 100);
+    })();
+  });
+}
+
 document.addEventListener('DOMContentLoaded', async function initGate() {
   document.getElementById('gate-error').textContent = 'Loading users…';
-  if (window.__firebaseSeedUsers) {
-    try { await window.__firebaseSeedUsers(); } catch (e) {}
+  const bridgeReady = await waitForFirebaseBridge(10000);
+  if (!bridgeReady) {
+    gateLoadError = 'Firebase failed to load in this browser.';
+  } else {
+    if (window.__firebaseSeedUsers) {
+      try { await window.__firebaseSeedUsers(); } catch (e) {}
+    }
+    await subscribeToUsersOnce();
   }
-  await subscribeToUsersOnce();
   if (gateLoadError) {
     document.getElementById('gate-error').textContent = "Couldn't load the user list — " + gateLoadError + ' Try refreshing the page.';
   } else if (allUsers.length === 0) {
@@ -1950,6 +1970,13 @@ async function initApp() {
   if (appInitialized) return;
   appInitialized = true;
   document.getElementById('main').innerHTML = `<div class="empty-state">Loading deals...</div>`;
+  const bridgeReady = await waitForFirebaseBridge(10000);
+  if (!bridgeReady) {
+    storageError = true;
+    storageErrorDetail = 'Firebase failed to load in this browser.';
+    render();
+    return;
+  }
   if (window.__firebaseMigrateLegacy) {
     try { await window.__firebaseMigrateLegacy(); } catch (e) { console.error('Migration failed:', e); }
   }
