@@ -1191,6 +1191,10 @@ const App = {
     }
     const existingIdx = deals.findIndex(d => d.id === draftDeal.id);
     if (existingIdx >= 0) {
+      // Editing only ever happens on a rejected deal (see the Edit button in
+      // the detail view), so resubmitting always starts a fresh approval round.
+      draftDeal.approvals = { connor: null, sandy: null };
+      draftDeal.rejectReasons = { connor: '', sandy: '' };
       deals[existingIdx] = draftDeal;
     } else {
       deals.unshift(draftDeal);
@@ -1230,6 +1234,39 @@ const App = {
     currentView = 'detail';
     currentDealId = dealId;
     render();
+  },
+
+  // Notes and attachments are editable directly from the detail view
+  // regardless of deal status — unlike the cost breakdown, they don't need
+  // a fresh approval round to change.
+  async updateDealNotes(dealId, value) {
+    const d = deals.find(x => x.id === dealId);
+    if (!d) return;
+    d.jobSite.notes = value;
+    await saveDeal(d);
+  },
+
+  async addAttachmentsToDeal(dealId, fileList) {
+    const d = deals.find(x => x.id === dealId);
+    if (!d) return;
+    const files = Array.from(fileList || []);
+    for (const file of files) {
+      try {
+        const dataUrl = await compressImageFile(file);
+        d.attachments = d.attachments || [];
+        d.attachments.push({ id: uid('att'), name: file.name || 'photo.jpg', dataUrl, addedAt: Date.now() });
+      } catch (e) {
+        alert('Could not attach "' + (file.name || 'that file') + '" — try a different photo.');
+      }
+    }
+    await saveDeal(d);
+  },
+
+  async removeAttachmentFromDeal(dealId, attId) {
+    const d = deals.find(x => x.id === dealId);
+    if (!d) return;
+    d.attachments = (d.attachments || []).filter(a => a.id !== attId);
+    await saveDeal(d);
   }
 };
 
@@ -1466,6 +1503,7 @@ function renderDetail() {
   const attachmentsHtml = (d.attachments || []).map(a => `
     <div class="attachment-thumb" onclick="openLightbox('${a.dataUrl}')">
       <img src="${a.dataUrl}" alt="${esc(a.name)}">
+      <button class="remove-x" onclick="event.stopPropagation(); App.removeAttachmentFromDeal('${d.id}','${a.id}')">✕</button>
       <div class="file-name">${esc(a.name)}</div>
     </div>`).join('');
 
@@ -1499,7 +1537,7 @@ function renderDetail() {
     </div>
     <div style="display:flex; align-items:center; gap:12px;">
       <div class="stamp ${status}">${status}</div>
-      ${status === 'pending' ? `<button class="btn btn-outline btn-small" onclick="App.editDeal('${d.id}')">Edit</button>` : ''}
+      ${status === 'rejected' ? `<button class="btn btn-outline btn-small" onclick="App.editDeal('${d.id}')">Edit</button>` : ''}
     </div>
   </div>
 
@@ -1509,7 +1547,11 @@ function renderDetail() {
       <div class="kv"><div class="k">Property Type</div><div class="v">${esc(d.jobSite.propertyType || '—')}</div></div>
       <div class="kv"><div class="k">Site Access</div><div class="v">${esc(d.jobSite.accessDifficulty || '—')}</div></div>
     </div>
-    ${d.jobSite.notes ? `<div style="margin-top:12px; font-size:13.5px;"><div class="k" style="font-size:11px; text-transform:uppercase; color:var(--muted); margin-bottom:4px;">Notes</div>${esc(d.jobSite.notes)}</div>` : ''}
+    <div style="margin-top:12px;">
+      <label class="field-label">Site Notes</label>
+      <textarea placeholder="Anything Connor and Sandy should know before approving — access, terrain, timeline pressure, HOA, etc."
+        onchange="App.updateDealNotes('${d.id}', this.value)">${esc(d.jobSite.notes)}</textarea>
+    </div>
   </div>
 
   <div class="panel">
@@ -1523,10 +1565,17 @@ function renderDetail() {
     </div>
   </div>
 
-  ${attachmentsHtml ? `<div class="panel">
+  <div class="panel">
     <h2>Attachments</h2>
+    <div class="attach-btn-row">
+      <label class="btn btn-outline btn-small" style="cursor:pointer;">
+        + Add Photos
+        <input type="file" accept="image/*" multiple capture="environment" style="display:none;" onchange="App.addAttachmentsToDeal('${d.id}', this.files); this.value='';">
+      </label>
+      <span class="attach-hint">Photos of the site, damage, or signed paperwork — compressed automatically before saving.</span>
+    </div>
     <div class="attachments-grid">${attachmentsHtml}</div>
-  </div>` : ''}
+  </div>
 
   <div class="panel">
     <h2>Approval</h2>
