@@ -24,6 +24,12 @@
     --radius: 6px;
     --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
     --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    --shadow-xs: 0 1px 2px rgba(16,23,29,0.05);
+    --shadow-sm: 0 1px 3px rgba(16,23,29,0.07), 0 1px 2px rgba(16,23,29,0.05);
+    --shadow-md: 0 3px 8px rgba(16,23,29,0.10), 0 1px 3px rgba(16,23,29,0.06);
+    --shadow-lg: 0 10px 28px rgba(16,23,29,0.18), 0 3px 10px rgba(16,23,29,0.08);
+    --inset-shadow: inset 0 1px 2px rgba(16,23,29,0.05);
+    --highlight: rgba(255,255,255,0.14);
   }
 
   body.dark {
@@ -41,6 +47,12 @@
     --green-soft: #16281F;
     --red: #E08080;
     --red-soft: #3A2020;
+    --shadow-xs: 0 1px 2px rgba(0,0,0,0.30);
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.40), 0 1px 2px rgba(0,0,0,0.30);
+    --shadow-md: 0 4px 10px rgba(0,0,0,0.48), 0 1px 4px rgba(0,0,0,0.35);
+    --shadow-lg: 0 14px 32px rgba(0,0,0,0.55), 0 4px 12px rgba(0,0,0,0.40);
+    --inset-shadow: inset 0 1px 2px rgba(0,0,0,0.35);
+    --highlight: rgba(255,255,255,0.05);
   }
 
   * { box-sizing: border-box; }
@@ -62,6 +74,9 @@
     justify-content: space-between;
     flex-wrap: wrap;
     gap: 12px;
+    box-shadow: var(--shadow-md);
+    position: relative;
+    z-index: 3;
   }
 
   header.topbar .brand {
@@ -94,14 +109,19 @@
     font-weight: 600;
     cursor: pointer;
     font-family: var(--sans);
-    transition: filter 0.12s ease;
+    transition: filter 0.12s ease, box-shadow 0.12s ease, transform 0.12s ease;
   }
   .btn:hover { filter: brightness(0.95); }
-  .btn:active { filter: brightness(0.88); }
+  .btn:active { filter: brightness(0.88); transform: translateY(1px); box-shadow: none !important; }
 
-  .btn-primary { background: var(--amber); color: #fff; }
+  .btn-primary {
+    background: linear-gradient(180deg, var(--highlight), rgba(0,0,0,0)), var(--amber);
+    color: #fff;
+    box-shadow: var(--shadow-sm);
+  }
+  .btn-primary:hover { box-shadow: var(--shadow-md); }
   .btn-ghost { background: transparent; color: #fff; border-color: rgba(255,255,255,0.35); }
-  .btn-outline { background: var(--paper); color: var(--ink); border-color: var(--line); }
+  .btn-outline { background: var(--paper); color: var(--ink); border-color: var(--line); box-shadow: var(--shadow-xs); }
   .btn-danger { background: var(--red-soft); color: var(--red); border-color: var(--red); }
   .btn-success { background: var(--green-soft); color: var(--green); border-color: var(--green); }
   .btn-small { padding: 5px 10px; font-size: 12.5px; }
@@ -121,6 +141,7 @@
     border: 1px solid rgba(255,255,255,0.35);
     border-radius: var(--radius);
     overflow: hidden;
+    box-shadow: inset 0 1px 3px rgba(0,0,0,0.25);
   }
   .mode-btn {
     background: transparent;
@@ -182,8 +203,10 @@
     gap: 16px;
     flex-wrap: wrap;
     cursor: pointer;
+    box-shadow: var(--shadow-xs);
+    transition: box-shadow 0.15s ease, transform 0.15s ease, border-color 0.15s ease;
   }
-  .deal-card:hover { border-color: var(--muted); }
+  .deal-card:hover { border-color: var(--muted); box-shadow: var(--shadow-md); transform: translateY(-1px); }
 
   .deal-card .info .job { font-weight: 700; font-size: 15px; margin-bottom: 3px; }
   .deal-card .info .meta { font-size: 12.5px; color: var(--muted); }
@@ -208,6 +231,7 @@
     border-radius: 3px;
     transform: rotate(-4deg);
     white-space: nowrap;
+    box-shadow: 1px 1px 0 rgba(0,0,0,0.10);
   }
   .stamp.pending { color: var(--amber); }
   .stamp.approved { color: var(--green); }
@@ -219,6 +243,7 @@
     border-radius: var(--radius);
     padding: 22px 24px;
     margin-bottom: 18px;
+    box-shadow: var(--shadow-sm);
   }
 
   .panel h2 {
@@ -252,6 +277,7 @@
     font-family: var(--sans);
     background: var(--paper);
     color: var(--ink);
+    box-shadow: var(--inset-shadow);
   }
   textarea { resize: vertical; min-height: 60px; }
   input:focus, select:focus, textarea:focus {
@@ -265,6 +291,7 @@
     border-radius: var(--radius);
     margin-bottom: 14px;
     overflow: hidden;
+    box-shadow: var(--shadow-xs);
   }
   .section-head {
     background: var(--panel-alt);
@@ -273,6 +300,7 @@
     align-items: center;
     justify-content: space-between;
     gap: 8px;
+    box-shadow: 0 1px 0 var(--line);
   }
   .section-head input[type=text] {
     font-weight: 700;
@@ -303,7 +331,7 @@
   }
   table.items td input, table.items td select { padding: 6px 8px; font-size: 13px; }
   table.items td.num { text-align: right; font-family: var(--mono); }
-  table.items tr.subtotal td { font-weight: 700; background: var(--panel-alt); font-family: var(--mono); }
+  table.items tr.subtotal td { font-weight: 700; background: var(--panel-alt); font-family: var(--mono); box-shadow: inset 0 1px 0 var(--line); }
   table.items tr.subtotal td.label-cell { font-family: var(--sans); }
 
   .table-scroll { overflow-x: auto; }
@@ -322,6 +350,7 @@
     border-radius: var(--radius);
     padding: 16px 20px;
     margin-top: 6px;
+    box-shadow: var(--inset-shadow);
   }
   .totals-bar .stat .stat-label {
     font-size: 11px;
@@ -350,7 +379,10 @@
     aspect-ratio: 1;
     background: var(--field);
     cursor: pointer;
+    box-shadow: var(--shadow-xs);
+    transition: box-shadow 0.15s ease, transform 0.15s ease;
   }
+  .attachment-thumb:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
   .attachment-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .attachment-thumb .remove-x {
     position: absolute;
@@ -415,6 +447,8 @@
     border: 1px solid var(--line);
     border-radius: var(--radius);
     padding: 14px 16px;
+    box-shadow: var(--shadow-xs);
+    background: var(--paper);
   }
   .approver-card .name { font-weight: 700; margin-bottom: 8px; font-size: 14.5px; }
   .approver-card .actions { display: flex; gap: 8px; margin-bottom: 8px; }
@@ -460,17 +494,38 @@
     margin-bottom: 14px;
   }
 
+  /* Real narrow devices get the same phone-optimized treatment as the manual
+     "Mobile" toggle below, so Auto mode is genuinely optimized for the phones
+     this app is mostly used from, not just a fallback. */
   @media (max-width: 640px) {
     .approval-grid { grid-template-columns: 1fr; }
+    .field-grid { grid-template-columns: 1fr; }
+    .job-site-summary { grid-template-columns: 1fr; }
+    .totals-bar { flex-direction: column; align-items: flex-start; gap: 10px; }
     header.topbar { padding: 14px 16px; }
     main { padding: 18px 12px 60px; }
+  }
+
+  /* Touch-target sizing shared by real narrow devices and the manual Mobile
+     toggle — phones need bigger tap targets than a mouse-driven desktop. */
+  @media (max-width: 640px), (pointer: coarse) {
+    body.force-mobile .btn, body:not(.force-desktop) .btn { min-height: 40px; }
+    body.force-mobile .icon-btn, body:not(.force-desktop) .icon-btn { width: 42px; height: 42px; }
+    body.force-mobile input[type=text], body.force-mobile input[type=number],
+    body.force-mobile input[type=date], body.force-mobile select, body.force-mobile textarea,
+    body:not(.force-desktop) input[type=text], body:not(.force-desktop) input[type=number],
+    body:not(.force-desktop) input[type=date], body:not(.force-desktop) select, body:not(.force-desktop) textarea {
+      padding: 10px 10px;
+      font-size: 16px; /* prevents iOS Safari auto-zoom on focus */
+    }
+    body.force-mobile .tab, body:not(.force-desktop) .tab { padding: 11px 14px; }
   }
 
   /* Manual view-mode override, independent of actual device width */
   body.force-mobile #app {
     max-width: 480px;
     margin: 0 auto;
-    box-shadow: 0 0 0 1px var(--line);
+    box-shadow: var(--shadow-lg);
     min-height: 100vh;
   }
   body.force-mobile .approval-grid { grid-template-columns: 1fr !important; }
@@ -479,6 +534,7 @@
   body.force-mobile main { padding: 18px 12px 60px !important; }
   body.force-mobile .totals-bar { flex-direction: column; align-items: flex-start; gap: 10px; }
   body.force-mobile .job-site-summary { grid-template-columns: 1fr !important; }
+  body.force-mobile table.items { min-width: 900px; font-size: 12.5px; }
 
   body.force-desktop .approval-grid { grid-template-columns: 1fr 1fr !important; }
   body.force-desktop .field-grid { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)) !important; }
@@ -501,6 +557,7 @@
     max-width: 360px;
     width: 100%;
     text-align: center;
+    box-shadow: var(--shadow-lg);
   }
   #gate .gate-card .title {
     font-size: 18px;
@@ -524,6 +581,30 @@
     min-height: 16px;
   }
   #gate .btn { width: 100%; }
+
+  #pin-modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(10,15,20,0.55);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  .pin-modal {
+    background: var(--paper);
+    border-radius: var(--radius);
+    padding: 24px 24px 20px;
+    max-width: 320px;
+    width: 100%;
+    text-align: center;
+    box-shadow: var(--shadow-lg);
+  }
+  .pin-modal .title { font-size: 16px; font-weight: 700; margin-bottom: 12px; }
+  .pin-modal input[type=password] { text-align: center; letter-spacing: 1px; margin-bottom: 12px; }
+  .pin-modal-actions { display: flex; gap: 8px; }
+  .pin-modal-actions .btn { flex: 1; }
 </style>
 </head>
 <body>
@@ -564,9 +645,21 @@
   <img id="lightbox-img" src="" alt="Attachment preview">
 </div>
 
+<div id="pin-modal-overlay">
+  <div class="pin-modal">
+    <div class="title" id="pin-modal-title">Enter PIN</div>
+    <div class="gate-error" id="pin-modal-error"></div>
+    <input type="password" id="pin-modal-input" placeholder="PIN" onkeydown="if(event.key==='Enter') submitPinModal(); if(event.key==='Escape') closePinModal();">
+    <div class="pin-modal-actions">
+      <button class="btn btn-outline" onclick="closePinModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="submitPinModal()">Unlock</button>
+    </div>
+  </div>
+</div>
+
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
-  import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+  import { getFirestore, collection, doc, setDoc, getDoc, getDocs, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyDDHjIX-V_DwizD85TzwvcjuDPu1lMZoSc",
@@ -580,13 +673,18 @@
 
   const firebaseApp = initializeApp(firebaseConfig);
   const db = getFirestore(firebaseApp);
-  const dealsDocRef = doc(db, 'apcDealBoard', 'deals');
 
-  // Save the full deals array as one document. Simple, and matches the
-  // "everyone shares one list" model — fine at this team's scale.
-  window.__firebaseSaveDeals = async function (dealsArray) {
+  // Legacy single-document store (one JSON blob for every deal). Superseded
+  // by the `deals` collection below, kept only as a one-time migration source.
+  const legacyDocRef = doc(db, 'apcDealBoard', 'deals');
+  const dealsCollRef = collection(db, 'deals');
+
+  // Each deal is its own document, keyed by the deal's own id. This avoids the
+  // 1MB single-document cap and the "last write wins, whole list" concurrency
+  // issue that came with storing everything in one blob.
+  window.__firebaseSaveDeal = async function (deal) {
     try {
-      await setDoc(dealsDocRef, { data: JSON.stringify(dealsArray), updatedAt: Date.now() });
+      await setDoc(doc(dealsCollRef, deal.id), deal);
       return { ok: true };
     } catch (e) {
       console.error('Firestore save failed:', e);
@@ -594,27 +692,85 @@
     }
   };
 
-  // Real-time subscription — fires immediately with current data, then again
-  // any time ANYONE (any device) changes it, so the app stays live without
-  // needing a manual refresh.
-  window.__firebaseSubscribe = function (onData, onError) {
-    onSnapshot(dealsDocRef, (snap) => {
-      try {
-        const parsed = snap.exists() ? JSON.parse(snap.data().data || '[]') : [];
-        onData(parsed);
-      } catch (e) {
-        console.error('Firestore parse failed:', e);
-        onData([]);
-      }
+  // Real-time subscription over the whole collection — fires immediately with
+  // current data, then again any time ANYONE (any device) changes it.
+  window.__firebaseSubscribeDeals = function (onData, onError) {
+    onSnapshot(dealsCollRef, (snap) => {
+      const arr = [];
+      snap.forEach((d) => arr.push(d.data()));
+      arr.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      onData(arr);
     }, (err) => {
       console.error('Firestore listen error:', err);
       if (onError) onError(err);
     });
   };
+
+  // One-time migration: if the `deals` collection is still empty but the old
+  // single-document store has data, copy each deal into its own document.
+  // Safe to call on every load — a no-op once the collection is populated.
+  window.__firebaseMigrateLegacy = async function () {
+    try {
+      const existing = await getDocs(dealsCollRef);
+      if (!existing.empty) return;
+      const legacySnap = await getDoc(legacyDocRef);
+      if (!legacySnap.exists()) return;
+      const parsed = JSON.parse(legacySnap.data().data || '[]');
+      for (const deal of parsed) {
+        await setDoc(doc(dealsCollRef, deal.id), deal);
+      }
+    } catch (e) {
+      console.error('Legacy migration failed:', e);
+    }
+  };
 </script>
 
 <script>
 const TEAM_PASSPHRASE = 'PLUTUS';
+
+// Per-approver PINs — same lightweight, client-side trust model as
+// TEAM_PASSPHRASE above (a deterrent, not real security). Change these to
+// whatever Connor and Sandy want before relying on them.
+const APPROVER_PINS = { connor: 'CONNOR1', sandy: 'SANDY1' };
+const APPROVER_LABELS = { connor: 'Connor', sandy: 'Sandy' };
+
+let pendingPinAction = null;
+
+function requireApproverUnlock(approver, action) {
+  let unlocked = false;
+  try { unlocked = localStorage.getItem('apc_approver_unlocked_' + approver) === 'yes'; } catch (e) {}
+  if (unlocked) { action(); return; }
+  pendingPinAction = action;
+  const input = document.getElementById('pin-modal-input');
+  document.getElementById('pin-modal-title').textContent = "Enter " + APPROVER_LABELS[approver] + "'s PIN";
+  document.getElementById('pin-modal-error').textContent = '';
+  input.value = '';
+  input.dataset.approver = approver;
+  document.getElementById('pin-modal-overlay').style.display = 'flex';
+  setTimeout(() => input.focus(), 30);
+}
+
+function closePinModal() {
+  document.getElementById('pin-modal-overlay').style.display = 'none';
+  pendingPinAction = null;
+}
+
+function submitPinModal() {
+  const input = document.getElementById('pin-modal-input');
+  const approver = input.dataset.approver;
+  const val = (input.value || '').trim();
+  if (val.toUpperCase() === (APPROVER_PINS[approver] || '').toUpperCase()) {
+    try { localStorage.setItem('apc_approver_unlocked_' + approver, 'yes'); } catch (e) {}
+    document.getElementById('pin-modal-overlay').style.display = 'none';
+    const action = pendingPinAction;
+    pendingPinAction = null;
+    if (action) action();
+  } else {
+    document.getElementById('pin-modal-error').textContent = 'Incorrect PIN — try again.';
+    input.value = '';
+    input.focus();
+  }
+}
 
 function applyTheme(theme) {
   document.body.classList.toggle('dark', theme === 'dark');
@@ -715,11 +871,12 @@ function todayStr() {
 
 let firebaseSubscribed = false;
 
-// One-off save, used after every mutation (submit, approve/reject, etc.)
-async function saveDeals() {
+// Save a single deal document, used after every mutation (submit,
+// approve/reject, etc.) — only the changed deal is written, not the whole list.
+async function saveDeal(deal) {
   try {
-    const result = window.__firebaseSaveDeals
-      ? await window.__firebaseSaveDeals(deals)
+    const result = window.__firebaseSaveDeal
+      ? await window.__firebaseSaveDeal(deal)
       : { ok: false, error: 'Firebase failed to load in this browser.' };
     storageError = !result.ok;
     storageErrorDetail = result.ok ? '' : (result.error || '');
@@ -730,13 +887,13 @@ async function saveDeals() {
   render();
 }
 
-// Subscribes once to the shared Firestore document. Resolves after the
-// first snapshot arrives (or the first error) so initApp never hangs on
+// Subscribes once to the shared Firestore `deals` collection. Resolves after
+// the first snapshot arrives (or the first error) so initApp never hangs on
 // "Loading deals..." forever, then keeps updating `deals` live as anyone
 // (any device) makes changes.
 function subscribeToDealsOnce() {
   return new Promise((resolve) => {
-    if (!window.__firebaseSubscribe) {
+    if (!window.__firebaseSubscribeDeals) {
       // Firebase script failed to load (offline, blocked, bad config, etc.)
       storageError = true;
       storageErrorDetail = 'Firebase failed to load in this browser.';
@@ -744,7 +901,7 @@ function subscribeToDealsOnce() {
       return;
     }
     let settled = false;
-    window.__firebaseSubscribe((remoteDeals) => {
+    window.__firebaseSubscribeDeals((remoteDeals) => {
       deals = remoteDeals;
       storageError = false;
       storageErrorDetail = '';
@@ -1086,9 +1243,10 @@ const App = {
     } else {
       deals.unshift(draftDeal);
     }
+    const saved = draftDeal;
     draftDeal = null;
     currentView = 'list';
-    await saveDeals();
+    await saveDeal(saved);
   },
 
   cancelForm() {
@@ -1102,7 +1260,7 @@ const App = {
     if (!d) return;
     d.approvals[approver] = value;
     if (value !== false) d.rejectReasons[approver] = '';
-    await saveDeals();
+    await saveDeal(d);
     currentView = 'detail';
     currentDealId = dealId;
     render();
@@ -1114,7 +1272,9 @@ const App = {
   },
 
   async saveRejectReason(dealId, approver) {
-    await saveDeals();
+    const d = deals.find(x => x.id === dealId);
+    if (!d) return;
+    await saveDeal(d);
     currentView = 'detail';
     currentDealId = dealId;
     render();
@@ -1366,13 +1526,13 @@ function renderDetail() {
     return `<div class="approver-card">
       <div class="name">${label}</div>
       <div class="actions">
-        <button class="btn btn-success btn-small" onclick="App.setApproval('${d.id}','${approver}', true)">Approve</button>
-        <button class="btn btn-danger btn-small" onclick="document.getElementById('reason-${approver}').style.display='block'">Reject</button>
+        <button class="btn btn-success btn-small" onclick="requireApproverUnlock('${approver}', () => App.setApproval('${d.id}','${approver}', true))">Approve</button>
+        <button class="btn btn-danger btn-small" onclick="requireApproverUnlock('${approver}', () => { document.getElementById('reason-${approver}').style.display='block'; })">Reject</button>
       </div>
       <div class="status-line">${statusLine}</div>
       <div id="reason-${approver}" style="display:${val===false ? 'block':'none'};">
         <textarea placeholder="Reason for rejection" oninput="App.updateRejectReason('${d.id}','${approver}', this.value)">${esc(reason)}</textarea>
-        <button class="btn btn-outline btn-small" style="margin-top:6px;" onclick="App.setApproval('${d.id}','${approver}', false); App.saveRejectReason('${d.id}','${approver}')">Confirm Reject</button>
+        <button class="btn btn-outline btn-small" style="margin-top:6px;" onclick="requireApproverUnlock('${approver}', () => { App.setApproval('${d.id}','${approver}', false); App.saveRejectReason('${d.id}','${approver}'); })">Confirm Reject</button>
       </div>
     </div>`;
   }
@@ -1431,6 +1591,9 @@ async function initApp() {
   if (appInitialized) return;
   appInitialized = true;
   document.getElementById('main').innerHTML = `<div class="empty-state">Loading deals...</div>`;
+  if (window.__firebaseMigrateLegacy) {
+    try { await window.__firebaseMigrateLegacy(); } catch (e) { console.error('Migration failed:', e); }
+  }
   await subscribeToDealsOnce();
   render();
 }
