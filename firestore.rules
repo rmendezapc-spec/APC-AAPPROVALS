@@ -4,29 +4,34 @@ rules_version = '2';
 // This repo has no Firebase CLI/deploy pipeline (see BUILDHANDOFF.md §7) — paste
 // this into Firebase Console -> Build -> Firestore Database -> Rules tab manually.
 //
-// Unlike the console's default "test mode" rules, this has no expiration
-// clause, so it will not silently start denying all reads/writes after 30 days.
+// Requires an authenticated Firebase session (the app signs in anonymously on
+// load — see the module script in index.html). This is a real access barrier:
+// a plain curl/API call with just the project config (which is public and
+// unavoidably visible in the page source) no longer gets in — it has to
+// establish a Firebase Auth session first. It does NOT distinguish which app
+// user is making the request (that's still the client-side name+PIN check in
+// index.html, a deterrent rather than real security) — anyone who loads the
+// real app still gets an anonymous session and full read/write access to
+// everything below. Revisit with real per-person Firebase Auth accounts if
+// that finer-grained boundary is needed later.
 //
-// Note: there is no Firebase Auth in this app (see BUILDHANDOFF.md §6), so this
-// is still open read/write to anyone with the project config, same trust model
-// as test mode — just without the time bomb. Revisit if real user auth is added.
+// Requires the "Anonymous" sign-in provider enabled in Firebase Console ->
+// Build -> Authentication -> Sign-in method. Without it, signInAnonymously()
+// fails and the app falls back to showing its usual storage-error banner.
 service cloud.firestore {
   match /databases/{database}/documents {
     // Legacy single-document store (superseded by the `deals` collection
-    // below), kept open only so the one-time migration read still works.
+    // below), kept only so the one-time migration read still works.
     match /apcDealBoard/{document=**} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null;
     }
     // One document per deal.
     match /deals/{document=**} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null;
     }
-    // Login accounts (name, PIN, role, approver slot). Note: since these
-    // rules have no real auth to check against, PINs stored here are
-    // readable by anyone with the project config — same trust model as
-    // everything else in this app, just worth knowing plainly.
+    // Login accounts (name, PIN, role, approver slot).
     match /users/{document=**} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null;
     }
   }
 }

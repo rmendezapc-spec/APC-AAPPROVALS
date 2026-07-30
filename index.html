@@ -645,6 +645,7 @@
     <button class="btn btn-ghost icon-btn" id="theme-toggle-btn" onclick="toggleTheme()" title="Toggle day/night mode">🌙</button>
     <button class="btn btn-ghost" onclick="App.goList()">All Deals</button>
     <button class="btn btn-primary" onclick="App.goNewDeal()">+ New Deal</button>
+    <button class="btn btn-outline btn-small" onclick="App.goChangePassword()">Change Password</button>
     <button class="btn btn-outline btn-small" onclick="logout()">Log Out</button>
   </div>
 </header>
@@ -660,6 +661,7 @@
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
   import { getFirestore, collection, doc, setDoc, deleteDoc, getDoc, getDocs, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+  import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyDDHjIX-V_DwizD85TzwvcjuDPu1lMZoSc",
@@ -673,6 +675,20 @@
 
   const firebaseApp = initializeApp(firebaseConfig);
   const db = getFirestore(firebaseApp);
+  const auth = getAuth(firebaseApp);
+
+  // Firestore rules now require request.auth != null on every collection, so
+  // an anonymous session is the real access barrier: a plain curl/API call
+  // with just the (public, unavoidably visible) project config no longer
+  // gets in — it has to actually establish a Firebase Auth session first,
+  // same as this page does. Top-level await here delays this module's
+  // completion (and therefore DOMContentLoaded) until sign-in resolves, so
+  // nothing below runs against Firestore before auth is ready.
+  try {
+    await signInAnonymously(auth);
+  } catch (e) {
+    console.error('Anonymous sign-in failed:', e);
+  }
 
   // Legacy single-document store (one JSON blob for every deal). Superseded
   // by the `deals` collection below, kept only as a one-time migration source.
@@ -761,20 +777,26 @@
     });
   };
 
-  // One-time seed of the base accounts (Sandy and Connor as the two fixed
-  // approver seats, Fidel as a rep) — a no-op once the collection has any
-  // users in it, same pattern as the deals migration above.
+  // Seed of the base accounts (Sandy and Connor as the two fixed approver
+  // seats, Richard as an admin, Fidel as a rep). Backfills whichever of
+  // these specific IDs are still missing rather than bailing out if the
+  // collection is non-empty, so adding a new base account later (like
+  // Richard) still lands even if the others were already seeded/edited.
   window.__firebaseSeedUsers = async function () {
     try {
       const existing = await getDocs(usersCollRef);
-      if (!existing.empty) return;
+      const existingIds = new Set();
+      existing.forEach((d) => existingIds.add(d.id));
       const seed = [
         { id: 'usr_sandy', name: 'Sandy', pin: 'SANDY888', role: 'approver', approverSlot: 'sandy', createdAt: Date.now() },
         { id: 'usr_connor', name: 'Connor', pin: 'CONNOR2385', role: 'approver', approverSlot: 'connor', createdAt: Date.now() },
+        { id: 'usr_richard', name: 'Richard', pin: 'Warrior662!', role: 'admin', approverSlot: null, createdAt: Date.now() },
         { id: 'usr_fidel', name: 'Fidel', pin: 'FIDEL1234', role: 'rep', approverSlot: null, createdAt: Date.now() }
       ];
       for (const user of seed) {
-        await setDoc(doc(usersCollRef, user.id), user);
+        if (!existingIds.has(user.id)) {
+          await setDoc(doc(usersCollRef, user.id), user);
+        }
       }
     } catch (e) {
       console.error('User seed failed:', e);
@@ -803,7 +825,7 @@ function updateUserChrome() {
   const label = document.getElementById('current-user-label');
   if (label) label.textContent = currentUser ? ('Logged in as ' + currentUser.name) : '';
   const manageBtn = document.getElementById('manage-users-btn');
-  if (manageBtn) manageBtn.style.display = (currentUser && currentUser.role === 'approver') ? '' : 'none';
+  if (manageBtn) manageBtn.style.display = isAdminUser(currentUser) ? '' : 'none';
 }
 
 function subscribeToUsersOnce() {
@@ -920,6 +942,13 @@ let storageError = false;
 let storageErrorDetail = '';
 
 function uid(prefix) { return prefix + '_' + Date.now() + '_' + Math.floor(Math.random()*10000); }
+
+// Approvers manage users because they're the two fixed approval seats;
+// admins (like Richard, building the tool) get the same user-management
+// access without an approval seat of their own.
+function isAdminUser(user) {
+  return !!user && (user.role === 'approver' || user.role === 'admin');
+}
 
 function money(n) {
   n = Number(n) || 0;
@@ -1128,8 +1157,37 @@ const App = {
   },
 
   goManageUsers() {
-    if (!currentUser || currentUser.role !== 'approver') return;
+    if (!isAdminUser(currentUser)) return;
     currentView = 'users';
+    render();
+  },
+
+  goChangePassword() {
+    if (!currentUser) return;
+    currentView = 'change-password';
+    render();
+  },
+
+  async submitPasswordChange() {
+    if (!currentUser) return;
+    const newInput = document.getElementById('new-password-input');
+    const confirmInput = document.getElementById('confirm-password-input');
+    const errorEl = document.getElementById('change-password-error');
+    const newVal = (newInput.value || '').trim();
+    const confirmVal = (confirmInput.value || '').trim();
+    if (!newVal) {
+      errorEl.textContent = 'Enter a new password.';
+      return;
+    }
+    if (newVal !== confirmVal) {
+      errorEl.textContent = "Passwords don't match — try again.";
+      confirmInput.value = '';
+      confirmInput.focus();
+      return;
+    }
+    currentUser.pin = newVal;
+    if (window.__firebaseSaveUser) await window.__firebaseSaveUser(currentUser);
+    currentView = 'list';
     render();
   },
 
@@ -1412,13 +1470,13 @@ const App = {
   // Manage Users is only reachable via goManageUsers, which already checks
   // this, but these are re-checked here too since they mutate shared data.
   updateUserField(userId, field, value) {
-    if (!currentUser || currentUser.role !== 'approver') return;
+    if (!isAdminUser(currentUser)) return;
     const u = allUsers.find(x => x.id === userId);
     if (u) u[field] = value;
   },
 
   async saveUserField(userId) {
-    if (!currentUser || currentUser.role !== 'approver') return;
+    if (!isAdminUser(currentUser)) return;
     const u = allUsers.find(x => x.id === userId);
     if (!u || !window.__firebaseSaveUser) return;
     await window.__firebaseSaveUser(u);
@@ -1426,7 +1484,7 @@ const App = {
   },
 
   async addUser() {
-    if (!currentUser || currentUser.role !== 'approver') return;
+    if (!isAdminUser(currentUser)) return;
     const nameInput = document.getElementById('new-user-name');
     const pinInput = document.getElementById('new-user-pin');
     const name = (nameInput.value || '').trim();
@@ -1447,7 +1505,7 @@ const App = {
   },
 
   async removeUser(userId) {
-    if (!currentUser || currentUser.role !== 'approver') return;
+    if (!isAdminUser(currentUser)) return;
     const u = allUsers.find(x => x.id === userId);
     if (!u) return;
     if (u.id === currentUser.id) {
@@ -1470,6 +1528,7 @@ function render() {
   else if (currentView === 'form') main.innerHTML = renderForm();
   else if (currentView === 'detail') main.innerHTML = renderDetail();
   else if (currentView === 'users') main.innerHTML = renderUsers();
+  else if (currentView === 'change-password') main.innerHTML = renderChangePassword();
 }
 
 function renderList() {
@@ -1804,14 +1863,14 @@ function renderDetail() {
 }
 
 function renderUsers() {
-  if (!currentUser || currentUser.role !== 'approver') {
+  if (!isAdminUser(currentUser)) {
     return `<div class="empty-state">You don't have access to this page.<div class="back-link" onclick="App.goList()">&larr; Back</div></div>`;
   }
 
   const rows = allUsers.map(u => {
     const roleLabel = u.approverSlot
       ? ('Approver — ' + (u.approverSlot === 'connor' ? "Connor's seat" : "Sandy's seat"))
-      : 'Rep';
+      : (u.role === 'admin' ? 'Admin' : 'Rep');
     return `<div class="user-row">
       <input type="text" value="${esc(u.name)}" class="user-name-input"
         onchange="App.updateUserField('${u.id}','name', this.value); App.saveUserField('${u.id}')">
@@ -1839,6 +1898,27 @@ function renderUsers() {
       <button class="btn btn-primary btn-small" onclick="App.addUser()">Add User</button>
     </div>
     <p class="attach-hint" style="margin-top:10px;">New users are added as Reps — they can submit deals, edit their own rejected deals, and post in Discussion, but can't approve or reject. Only Connor and Sandy's own seats can approve; rename either account above to hand that seat to someone else.</p>
+  </div>`;
+}
+
+function renderChangePassword() {
+  if (!currentUser) return `<div class="empty-state">Not logged in.</div>`;
+  return `
+  <div class="back-link" onclick="App.goList()">&larr; Back to all deals</div>
+  <div class="panel" style="max-width:360px;">
+    <h2>Change Password</h2>
+    <p style="color:var(--muted); font-size:13px; margin-top:-8px;">Changing the password for <strong>${esc(currentUser.name)}</strong>.</p>
+    <div class="gate-error" id="change-password-error"></div>
+    <div class="field-grid" style="grid-template-columns:1fr;">
+      <div><label class="field-label">New Password</label>
+        <input type="password" id="new-password-input"></div>
+      <div><label class="field-label">Confirm New Password</label>
+        <input type="password" id="confirm-password-input" onkeydown="if(event.key==='Enter') App.submitPasswordChange()"></div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-outline" onclick="App.goList()">Cancel</button>
+      <button class="btn btn-primary" onclick="App.submitPasswordChange()">Save New Password</button>
+    </div>
   </div>`;
 }
 
