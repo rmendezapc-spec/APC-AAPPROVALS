@@ -492,6 +492,7 @@
     padding: 0 2px;
   }
   .user-role { font-size: 13px; color: var(--muted); }
+  .user-role-select { width: auto; min-width: 90px; }
   .user-row-add { padding-top: 8px; border-top: 1px solid var(--line); }
 
   .form-actions {
@@ -1529,8 +1530,10 @@ const App = {
     if (!isAdminUser(currentUser)) return;
     const nameInput = document.getElementById('new-user-name');
     const pinInput = document.getElementById('new-user-pin');
+    const roleSelect = document.getElementById('new-user-role');
     const name = (nameInput.value || '').trim();
     const pin = (pinInput.value || '').trim();
+    const role = roleSelect.value === 'admin' ? 'admin' : 'rep';
     if (!name || !pin) {
       alert('Enter a name and a PIN for the new user.');
       return;
@@ -1539,10 +1542,11 @@ const App = {
       alert('A user named "' + name + '" already exists.');
       return;
     }
-    const user = { id: uid('usr'), name, pin, role: 'rep', approverSlot: null, createdAt: Date.now() };
+    const user = { id: uid('usr'), name, pin, role, approverSlot: null, createdAt: Date.now() };
     if (window.__firebaseSaveUser) await window.__firebaseSaveUser(user);
     nameInput.value = '';
     pinInput.value = '';
+    roleSelect.value = 'rep';
     render();
   },
 
@@ -1910,15 +1914,18 @@ function renderUsers() {
   }
 
   const rows = allUsers.map(u => {
-    const roleLabel = u.approverSlot
-      ? ('Approver — ' + (u.approverSlot === 'connor' ? "Connor's seat" : "Sandy's seat"))
-      : (u.role === 'admin' ? 'Admin' : 'Rep');
+    const roleCell = u.approverSlot
+      ? `<div class="user-role">Approver — ${u.approverSlot === 'connor' ? "Connor's seat" : "Sandy's seat"}</div>`
+      : `<select class="user-role-select" onchange="App.updateUserField('${u.id}','role', this.value); App.saveUserField('${u.id}')">
+          <option value="rep" ${u.role === 'rep' ? 'selected' : ''}>Rep</option>
+          <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin</option>
+        </select>`;
     return `<div class="user-row">
       <input type="text" value="${esc(u.name)}" class="user-name-input"
         onchange="App.updateUserField('${u.id}','name', this.value); App.saveUserField('${u.id}')">
       <input type="text" value="${esc(u.pin)}" class="user-pin-input" placeholder="PIN"
         onchange="App.updateUserField('${u.id}','pin', this.value); App.saveUserField('${u.id}')">
-      <div class="user-role">${roleLabel}</div>
+      ${roleCell}
       <button class="btn btn-danger btn-small" onclick="App.removeUser('${u.id}')">Remove</button>
     </div>`;
   }).join('');
@@ -1936,10 +1943,13 @@ function renderUsers() {
     <div class="user-row user-row-add">
       <input type="text" id="new-user-name" placeholder="New user's name">
       <input type="text" id="new-user-pin" placeholder="PIN">
-      <div></div>
+      <select id="new-user-role">
+        <option value="rep" selected>Rep</option>
+        <option value="admin">Admin</option>
+      </select>
       <button class="btn btn-primary btn-small" onclick="App.addUser()">Add User</button>
     </div>
-    <p class="attach-hint" style="margin-top:10px;">New users are added as Reps — they can submit deals, edit their own rejected deals, and post in Discussion, but can't approve or reject. Only Connor and Sandy's own seats can approve; rename either account above to hand that seat to someone else.</p>
+    <p class="attach-hint" style="margin-top:10px;">Reps can submit deals, edit their own rejected deals, and post in Discussion, but can't approve or reject. Admins get this Manage Users page too, same as Reps otherwise. Only Connor and Sandy's own seats can approve; rename either account above to hand that seat to someone else.</p>
   </div>`;
 }
 
