@@ -355,12 +355,14 @@
 
   .attachments-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
-    gap: 10px;
+    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+    gap: 14px;
     margin-top: 12px;
   }
+  .attachment-card { display: flex; flex-direction: column; gap: 6px; }
   .attachment-thumb {
     position: relative;
+    display: block;
     border: 1px solid var(--line);
     border-radius: 4px;
     overflow: hidden;
@@ -372,19 +374,14 @@
   }
   .attachment-thumb:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
   .attachment-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-  .attachment-thumb .remove-x {
-    position: absolute;
-    top: 3px;
-    right: 3px;
-    background: rgba(28,43,54,0.75);
-    color: #fff;
-    border: none;
-    border-radius: 3px;
-    width: 20px;
-    height: 20px;
-    font-size: 12px;
-    cursor: pointer;
-    line-height: 1;
+  .attachment-thumb.attachment-file { text-decoration: none; }
+  .attachment-thumb .file-icon {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 34px;
   }
   .attachment-thumb .file-name {
     position: absolute;
@@ -397,6 +394,8 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  .attachment-category-select { font-size: 12px; padding: 5px 6px; }
+  .attachment-delete-btn { width: 100%; }
   .attach-btn-row { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
   .attach-hint { font-size: 12px; color: var(--muted); }
 
@@ -1184,6 +1183,52 @@ function closeLightbox() {
   document.getElementById('lightbox-img').src = '';
 }
 
+const ATTACHMENT_CATEGORIES = ['Photo', 'Contract', 'Site Plan', 'Other'];
+
+function guessAttachmentCategory(file) {
+  const type = (file.type || '').toLowerCase();
+  const name = (file.name || '').toLowerCase();
+  if (type.startsWith('image/')) return 'Photo';
+  if (type === 'application/pdf' || name.endsWith('.pdf')) return 'Contract';
+  return 'Other';
+}
+
+// Images get resized/compressed like before; anything else (PDFs, etc.) is
+// just read as-is — there's no canvas-based way to "compress" a PDF client-side.
+function processAttachmentFile(file) {
+  if ((file.type || '').startsWith('image/')) {
+    return compressImageFile(file);
+  }
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => resolve(e.target.result);
+    reader.onerror = () => reject(new Error('Could not read file'));
+    reader.readAsDataURL(file);
+  });
+}
+
+// Shared card markup for both the draft form and the always-open detail
+// view — only the category/delete handlers differ between the two contexts.
+function renderAttachmentCard(a, opts) {
+  const isImage = !a.mimeType || a.mimeType.startsWith('image/');
+  const preview = isImage
+    ? `<div class="attachment-thumb" onclick="openLightbox('${a.dataUrl}')">
+        <img src="${a.dataUrl}" alt="${esc(a.name)}">
+        <div class="file-name">${esc(a.name)}</div>
+      </div>`
+    : `<a class="attachment-thumb attachment-file" href="${a.dataUrl}" target="_blank" rel="noopener" download="${esc(a.name)}">
+        <div class="file-icon">📄</div>
+        <div class="file-name">${esc(a.name)}</div>
+      </a>`;
+  return `<div class="attachment-card">
+    ${preview}
+    <select class="attachment-category-select" onchange="${opts.categoryOnChange}">
+      ${ATTACHMENT_CATEGORIES.map(c => `<option value="${c}" ${c === (a.category || 'Photo') ? 'selected' : ''}>${c}</option>`).join('')}
+    </select>
+    <button class="btn btn-outline btn-small attachment-delete-btn" onclick="${opts.deleteOnClick}">Delete</button>
+  </div>`;
+}
+
 // ---------- App namespace ----------
 const App = {
 
@@ -1386,15 +1431,17 @@ const App = {
     const files = Array.from(fileList || []);
     for (const file of files) {
       try {
-        const dataUrl = await compressImageFile(file);
+        const dataUrl = await processAttachmentFile(file);
         draftDeal.attachments.push({
           id: uid('att'),
-          name: file.name || 'photo.jpg',
+          name: file.name || 'file',
           dataUrl,
+          mimeType: file.type || '',
+          category: guessAttachmentCategory(file),
           addedAt: Date.now()
         });
       } catch (e) {
-        alert('Could not attach "' + (file.name || 'that file') + '" — try a different photo.');
+        alert('Could not attach "' + (file.name || 'that file') + '" — try a different file.');
       }
     }
     render();
@@ -1403,6 +1450,11 @@ const App = {
   removeAttachment(attId) {
     draftDeal.attachments = draftDeal.attachments.filter(a => a.id !== attId);
     render();
+  },
+
+  updateAttachmentCategory(attId, value) {
+    const a = (draftDeal.attachments || []).find(x => x.id === attId);
+    if (a) a.category = value;
   },
 
   async submitDeal() {
@@ -1480,11 +1532,18 @@ const App = {
     const files = Array.from(fileList || []);
     for (const file of files) {
       try {
-        const dataUrl = await compressImageFile(file);
+        const dataUrl = await processAttachmentFile(file);
         d.attachments = d.attachments || [];
-        d.attachments.push({ id: uid('att'), name: file.name || 'photo.jpg', dataUrl, addedAt: Date.now() });
+        d.attachments.push({
+          id: uid('att'),
+          name: file.name || 'file',
+          dataUrl,
+          mimeType: file.type || '',
+          category: guessAttachmentCategory(file),
+          addedAt: Date.now()
+        });
       } catch (e) {
-        alert('Could not attach "' + (file.name || 'that file') + '" — try a different photo.');
+        alert('Could not attach "' + (file.name || 'that file') + '" — try a different file.');
       }
     }
     await saveDeal(d);
@@ -1494,6 +1553,15 @@ const App = {
     const d = deals.find(x => x.id === dealId);
     if (!d) return;
     d.attachments = (d.attachments || []).filter(a => a.id !== attId);
+    await saveDeal(d);
+  },
+
+  async updateAttachmentCategoryOnDeal(dealId, attId, value) {
+    const d = deals.find(x => x.id === dealId);
+    if (!d) return;
+    const a = (d.attachments || []).find(x => x.id === attId);
+    if (!a) return;
+    a.category = value;
     await saveDeal(d);
   },
 
@@ -1523,6 +1591,19 @@ const App = {
     const u = allUsers.find(x => x.id === userId);
     if (!u || !window.__firebaseSaveUser) return;
     await window.__firebaseSaveUser(u);
+    render();
+  },
+
+  // Existing PINs are never shown to admins editing other users — this only
+  // ever writes a NEW value, and does nothing if left blank.
+  async resetUserPin(userId, newPin) {
+    if (!isAdminUser(currentUser)) return;
+    const val = (newPin || '').trim();
+    if (!val) return;
+    const u = allUsers.find(x => x.id === userId);
+    if (!u) return;
+    u.pin = val;
+    if (window.__firebaseSaveUser) await window.__firebaseSaveUser(u);
     render();
   },
 
@@ -1679,12 +1760,10 @@ function renderForm() {
     </div>`;
   }).join('');
 
-  const attachmentsHtml = d.attachments.map(a => `
-    <div class="attachment-thumb" onclick="openLightbox('${a.dataUrl}')">
-      <img src="${a.dataUrl}" alt="${esc(a.name)}">
-      <button class="remove-x" onclick="event.stopPropagation(); App.removeAttachment('${a.id}')">✕</button>
-      <div class="file-name">${esc(a.name)}</div>
-    </div>`).join('');
+  const attachmentsHtml = d.attachments.map(a => renderAttachmentCard(a, {
+    categoryOnChange: `App.updateAttachmentCategory('${a.id}', this.value)`,
+    deleteOnClick: `App.removeAttachment('${a.id}')`
+  })).join('');
 
   return `
   <div class="back-link" onclick="App.cancelForm()">&larr; Back to all deals</div>
@@ -1740,10 +1819,10 @@ function renderForm() {
     <h2>Attachments</h2>
     <div class="attach-btn-row">
       <label class="btn btn-outline btn-small" style="cursor:pointer;">
-        + Add Photos
-        <input type="file" accept="image/*" multiple capture="environment" style="display:none;" onchange="App.handleFiles(this.files); this.value='';">
+        + Add Attachments
+        <input type="file" accept="image/*,application/pdf" multiple capture="environment" style="display:none;" onchange="App.handleFiles(this.files); this.value='';">
       </label>
-      <span class="attach-hint">Photos of the site, damage, or signed paperwork — compressed automatically before saving.</span>
+      <span class="attach-hint">Photos, contracts, and site plans — images are compressed automatically before saving.</span>
     </div>
     <div class="attachments-grid">${attachmentsHtml}</div>
   </div>
@@ -1799,12 +1878,10 @@ function renderDetail() {
     </div>`;
   }).join('');
 
-  const attachmentsHtml = (d.attachments || []).map(a => `
-    <div class="attachment-thumb" onclick="openLightbox('${a.dataUrl}')">
-      <img src="${a.dataUrl}" alt="${esc(a.name)}">
-      <button class="remove-x" onclick="event.stopPropagation(); App.removeAttachmentFromDeal('${d.id}','${a.id}')">✕</button>
-      <div class="file-name">${esc(a.name)}</div>
-    </div>`).join('');
+  const attachmentsHtml = (d.attachments || []).map(a => renderAttachmentCard(a, {
+    categoryOnChange: `App.updateAttachmentCategoryOnDeal('${d.id}','${a.id}', this.value)`,
+    deleteOnClick: `App.removeAttachmentFromDeal('${d.id}','${a.id}')`
+  })).join('');
 
   const commentsHtml = (d.comments || []).length
     ? (d.comments || []).map(c => `
@@ -1881,10 +1958,10 @@ function renderDetail() {
     <h2>Attachments</h2>
     <div class="attach-btn-row">
       <label class="btn btn-outline btn-small" style="cursor:pointer;">
-        + Add Photos
-        <input type="file" accept="image/*" multiple capture="environment" style="display:none;" onchange="App.addAttachmentsToDeal('${d.id}', this.files); this.value='';">
+        + Add Attachments
+        <input type="file" accept="image/*,application/pdf" multiple capture="environment" style="display:none;" onchange="App.addAttachmentsToDeal('${d.id}', this.files); this.value='';">
       </label>
-      <span class="attach-hint">Photos of the site, damage, or signed paperwork — compressed automatically before saving.</span>
+      <span class="attach-hint">Photos, contracts, and site plans — images are compressed automatically before saving.</span>
     </div>
     <div class="attachments-grid">${attachmentsHtml}</div>
   </div>
@@ -1923,8 +2000,8 @@ function renderUsers() {
     return `<div class="user-row">
       <input type="text" value="${esc(u.name)}" class="user-name-input"
         onchange="App.updateUserField('${u.id}','name', this.value); App.saveUserField('${u.id}')">
-      <input type="text" value="${esc(u.pin)}" class="user-pin-input" placeholder="PIN"
-        onchange="App.updateUserField('${u.id}','pin', this.value); App.saveUserField('${u.id}')">
+      <input type="password" value="" class="user-pin-input" placeholder="New PIN (leave blank to keep)"
+        onchange="App.resetUserPin('${u.id}', this.value); this.value='';">
       ${roleCell}
       <button class="btn btn-danger btn-small" onclick="App.removeUser('${u.id}')">Remove</button>
     </div>`;
