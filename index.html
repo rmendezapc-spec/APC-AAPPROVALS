@@ -982,7 +982,7 @@ function updateUserChrome() {
   const manageBtn = document.getElementById('manage-users-btn');
   if (manageBtn) manageBtn.style.display = isAdminUser(currentUser) ? '' : 'none';
   const templatesBtn = document.getElementById('manage-templates-btn');
-  if (templatesBtn) templatesBtn.style.display = isAdminUser(currentUser) ? '' : 'none';
+  if (templatesBtn) templatesBtn.style.display = currentUser ? '' : 'none';
 }
 
 let gateLoadError = '';
@@ -1598,7 +1598,7 @@ const App = {
   },
 
   goManageTemplates() {
-    if (!isAdminUser(currentUser)) return;
+    if (!currentUser) return;
     currentView = 'templates';
     render();
   },
@@ -2078,14 +2078,16 @@ const App = {
     render();
   },
 
+  // Templates (unlike Manage Users) are open to any logged-in user to create
+  // and edit — anyone building proposals may need to add or adjust boilerplate.
   updateTemplateField(templateId, field, value) {
-    if (!isAdminUser(currentUser)) return;
+    if (!currentUser) return;
     const t = allTemplates.find(x => x.id === templateId);
     if (t) t[field] = value;
   },
 
   async saveTemplateField(templateId) {
-    if (!isAdminUser(currentUser)) return;
+    if (!currentUser) return;
     const t = allTemplates.find(x => x.id === templateId);
     if (!t || !window.__firebaseSaveTemplate) return;
     await window.__firebaseSaveTemplate(t);
@@ -2093,7 +2095,7 @@ const App = {
   },
 
   async addTemplate() {
-    if (!isAdminUser(currentUser)) return;
+    if (!currentUser) return;
     const nameInput = document.getElementById('new-template-name');
     const name = (nameInput.value || '').trim();
     if (!name) {
@@ -2111,7 +2113,7 @@ const App = {
   },
 
   async removeTemplate(templateId) {
-    if (!isAdminUser(currentUser)) return;
+    if (!currentUser) return;
     const t = allTemplates.find(x => x.id === templateId);
     if (!t) return;
     if (!confirm('Remove template "' + t.name + '"? This cannot be undone.')) return;
@@ -2557,7 +2559,7 @@ function templateEditorField(templateId, field, label, value, rows) {
 }
 
 function renderTemplates() {
-  if (!isAdminUser(currentUser)) {
+  if (!currentUser) {
     return `<div class="empty-state">You don't have access to this page.<div class="back-link" onclick="App.goList()">&larr; Back</div></div>`;
   }
 
