@@ -444,6 +444,13 @@
     text-overflow: ellipsis;
   }
   .attachment-category-select { font-size: 12px; padding: 5px 6px; }
+  .attachment-description-input {
+    font-size: 12px;
+    padding: 5px 6px;
+    min-height: 44px;
+    resize: vertical;
+    font-family: var(--sans);
+  }
   .attachment-delete-btn { width: 100%; }
   .attach-btn-row { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
   .attach-hint { font-size: 12px; color: var(--muted); }
@@ -1462,6 +1469,8 @@ function renderAttachmentCard(a, opts) {
     <select class="attachment-category-select" onchange="${opts.categoryOnChange}">
       ${ATTACHMENT_CATEGORIES.map(c => `<option value="${c}" ${c === (a.category || 'Photo') ? 'selected' : ''}>${c}</option>`).join('')}
     </select>
+    <textarea class="attachment-description-input" placeholder="Add a description..."
+        onchange="${opts.descriptionOnChange}">${esc(a.description || '')}</textarea>
     <button class="btn btn-outline btn-small attachment-delete-btn" onclick="${opts.deleteOnClick}">Delete</button>
   </div>`;
 }
@@ -1860,6 +1869,7 @@ const App = {
           dataUrl,
           mimeType: file.type || '',
           category: guessAttachmentCategory(file),
+          description: '',
           addedAt: Date.now()
         });
       } catch (e) {
@@ -1877,6 +1887,11 @@ const App = {
   updateAttachmentCategory(attId, value) {
     const a = (draftDeal.attachments || []).find(x => x.id === attId);
     if (a) a.category = value;
+  },
+
+  updateAttachmentDescription(attId, value) {
+    const a = (draftDeal.attachments || []).find(x => x.id === attId);
+    if (a) a.description = value;
   },
 
   async submitDeal() {
@@ -1971,6 +1986,7 @@ const App = {
           dataUrl,
           mimeType: file.type || '',
           category: guessAttachmentCategory(file),
+          description: '',
           addedAt: Date.now()
         });
       } catch (e) {
@@ -1993,6 +2009,15 @@ const App = {
     const a = (d.attachments || []).find(x => x.id === attId);
     if (!a) return;
     a.category = value;
+    await saveDeal(d);
+  },
+
+  async updateAttachmentDescriptionOnDeal(dealId, attId, value) {
+    const d = deals.find(x => x.id === dealId);
+    if (!d) return;
+    const a = (d.attachments || []).find(x => x.id === attId);
+    if (!a) return;
+    a.description = value;
     await saveDeal(d);
   },
 
@@ -2238,6 +2263,7 @@ function renderForm() {
 
   const attachmentsHtml = d.attachments.map(a => renderAttachmentCard(a, {
     categoryOnChange: `App.updateAttachmentCategory('${a.id}', this.value)`,
+    descriptionOnChange: `App.updateAttachmentDescription('${a.id}', this.value)`,
     deleteOnClick: `App.removeAttachment('${a.id}')`
   })).join('');
 
@@ -2380,6 +2406,7 @@ function renderDetail() {
 
   const attachmentsHtml = (d.attachments || []).map(a => renderAttachmentCard(a, {
     categoryOnChange: `App.updateAttachmentCategoryOnDeal('${d.id}','${a.id}', this.value)`,
+    descriptionOnChange: `App.updateAttachmentDescriptionOnDeal('${d.id}','${a.id}', this.value)`,
     deleteOnClick: `App.removeAttachmentFromDeal('${d.id}','${a.id}')`
   })).join('');
 
