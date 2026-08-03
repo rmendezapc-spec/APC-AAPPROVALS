@@ -773,9 +773,10 @@
 </div>
 
 <script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
-  import { getFirestore, collection, doc, setDoc, deleteDoc, getDoc, getDocs, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
-  import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.17.0/firebase-app.js";
+  import { getFirestore, collection, doc, setDoc, deleteDoc, getDoc, getDocs, onSnapshot } from "https://www.gstatic.com/firebasejs/12.17.0/firebase-firestore.js";
+  import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/12.17.0/firebase-auth.js";
+  import { getAI, getGenerativeModel, GoogleAIBackend } from "https://www.gstatic.com/firebasejs/12.17.0/firebase-ai.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyDDHjIX-V_DwizD85TzwvcjuDPu1lMZoSc",
@@ -790,6 +791,30 @@
   const firebaseApp = initializeApp(firebaseConfig);
   const db = getFirestore(firebaseApp);
   const auth = getAuth(firebaseApp);
+
+  // AI Logic (Gemini, via the free "Gemini Developer API" backend) powers
+  // the Site Notes "Organize with AI" button. No API key ever appears in
+  // this page's source — Firebase mediates the call using the project's own
+  // AI Logic configuration, enabled once in the Firebase Console. If that
+  // product isn't enabled yet, aiModel stays null and the button just shows
+  // a clear error instead of silently failing.
+  let aiModel = null;
+  try {
+    const ai = getAI(firebaseApp, { backend: new GoogleAIBackend() });
+    aiModel = getGenerativeModel(ai, { model: 'gemini-2.5-flash' });
+  } catch (e) {
+    console.error('Firebase AI Logic init failed:', e);
+  }
+
+  window.__firebaseOrganizeNotes = async function (rawText) {
+    if (!aiModel) throw new Error('AI Logic is not enabled for this Firebase project yet.');
+    const prompt = 'Organize the following sales rep site notes into clear, concise bullet points. '
+      + 'Keep every specific detail (measurements, names, dates, concerns) — just tighten the wording and structure. '
+      + 'Return ONLY the bullet points, one per line, each starting with "- ". No intro, no summary, no extra commentary.\n\n'
+      + 'Site notes:\n' + rawText;
+    const result = await aiModel.generateContent(prompt);
+    return result.response.text();
+  };
 
   // Firestore rules now require request.auth != null on every collection, so
   // an anonymous session is the real access barrier: a plain curl/API call
@@ -2206,6 +2231,27 @@ const App = {
     draftDeal.jobSite[field] = value;
   },
 
+  async organizeDraftNotesWithAI() {
+    const notes = (draftDeal.jobSite.notes || '').trim();
+    if (!notes) {
+      alert('Add some notes first, then organize them.');
+      return;
+    }
+    const btn = document.getElementById('organize-draft-notes-btn');
+    const originalLabel = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Organizing…'; }
+    try {
+      if (!window.__firebaseOrganizeNotes) throw new Error('AI Logic is not available in this browser.');
+      const organized = await window.__firebaseOrganizeNotes(notes);
+      draftDeal.jobSite.notes = organized.trim();
+      render();
+    } catch (e) {
+      alert('Could not organize notes with AI — ' + ((e && e.message) || 'check your connection and try again.'));
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = originalLabel || '✨ Organize with AI'; }
+    }
+  },
+
   addSection() {
     draftDeal.sections.push({ id: uid('sec'), name: 'New Section', items: [blankItem()] });
     render();
@@ -2450,6 +2496,30 @@ const App = {
     if (!d) return;
     d.jobSite.notes = value;
     await saveDeal(d);
+  },
+
+  async organizeNotesWithAI(dealId) {
+    const d = deals.find(x => x.id === dealId);
+    if (!d) return;
+    const notes = (d.jobSite.notes || '').trim();
+    if (!notes) {
+      alert('Add some notes first, then organize them.');
+      return;
+    }
+    const btn = document.getElementById('organize-notes-btn-' + dealId);
+    const originalLabel = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Organizing…'; }
+    try {
+      if (!window.__firebaseOrganizeNotes) throw new Error('AI Logic is not available in this browser.');
+      const organized = await window.__firebaseOrganizeNotes(notes);
+      d.jobSite.notes = organized.trim();
+      await saveDeal(d);
+      render();
+    } catch (e) {
+      alert('Could not organize notes with AI — ' + ((e && e.message) || 'check your connection and try again.'));
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = originalLabel || '✨ Organize with AI'; }
+    }
   },
 
   // Generic single-field update, used by the proposal screen to fill in
@@ -2867,7 +2937,10 @@ function renderForm() {
         </select></div>
     </div>
     <div style="margin-top:12px;">
-      <label class="field-label">Site Notes</label>
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:5px;">
+        <label class="field-label" style="margin-bottom:0;">Site Notes</label>
+        <button class="btn btn-outline btn-small" id="organize-draft-notes-btn" onclick="App.organizeDraftNotesWithAI()">✨ Organize with AI</button>
+      </div>
       <textarea placeholder="Anything Connor and Sandy should know before approving — access, terrain, timeline pressure, HOA, etc."
         oninput="App.updateJobSiteField('notes', this.value)">${esc(d.jobSite.notes)}</textarea>
     </div>
@@ -3000,7 +3073,10 @@ function renderDetail() {
       <div class="kv"><div class="k">Site Access</div><div class="v">${esc(d.jobSite.accessDifficulty || '—')}</div></div>
     </div>
     <div style="margin-top:12px;">
-      <label class="field-label">Site Notes</label>
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:5px;">
+        <label class="field-label" style="margin-bottom:0;">Site Notes</label>
+        <button class="btn btn-outline btn-small" id="organize-notes-btn-${d.id}" onclick="App.organizeNotesWithAI('${d.id}')">✨ Organize with AI</button>
+      </div>
       <textarea placeholder="Anything Connor and Sandy should know before approving — access, terrain, timeline pressure, HOA, etc."
         onchange="App.updateDealNotes('${d.id}', this.value)">${esc(d.jobSite.notes)}</textarea>
     </div>
