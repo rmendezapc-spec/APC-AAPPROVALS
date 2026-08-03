@@ -967,47 +967,52 @@
       const starter = {
         id: 'tpl_standard',
         name: 'Standard Proposal',
-        scopeIntro: 'Thank you for the opportunity to bid on your project. We specialize in delivering quality workmanship, durability, security, and visual appeal. Below is a detailed breakdown of our proposed scope, terms, and protections for your review.',
+        scopeIntro: 'Thank you for the opportunity to bid on your precast concrete fence installation. At Concrete Fence Installers Inc., we specialize in turnkey perimeter wall solutions engineered for durability, security, and visual appeal. Below is a detailed breakdown of our proposed scope, terms, and protections for your review.',
         scopeSteps: [
-          'Material Procurement — acquire all necessary materials, including panels, posts, caps, and hardware. Inspect upon delivery to ensure quality and conformance.',
-          'Site Preparation — excavate footings per engineering specs, ensuring consistent spacing and alignment.',
-          'Installation — mount panels/posts using specified hardware, ensuring level alignment and structural integrity.',
-          'Finishing Touches — apply any sealants or fillers for uniform appearance and additional protection.',
-          'Site Cleanup — remove all construction debris and restore the worksite to its original condition as closely as possible.',
-          'Final Inspection — conduct a complete walkthrough to confirm installation meets all specifications and quality standards.'
+          'Material Procurement | Acquire all necessary materials, including precast panels, posts, caps, and hardware. Inspect upon delivery to ensure quality and conformance.',
+          'Foundation Preparation | Excavate footings per project engineering specs, ensuring accuracy in alignment and depth.',
+          'Post Installation | Set precast concrete posts securely with concrete footings, maintaining consistent spacing and alignment.',
+          'Panel Installation | Mount panels between posts using specified hardware, ensuring level alignment and structural integrity.',
+          'Finishing Touches | Install caps and apply any sealants or fillers for uniform appearance and additional strength.',
+          'Site Cleanup | Remove all construction debris and restore the worksite to its original condition as closely as possible.',
+          'Final Inspection | Conduct a complete walk through to confirm installation meets all specifications and quality standards.',
+          'Footing Specs on Bid | Footing size and quantity are calculated during engineering review for this site. Any deviations from the approved footing design will require a written change order and may impact final pricing.'
         ].join('\n'),
         conditions: [
-          'Compliance — registered per the latest applicable building codes. Sole responsibility of the customer.',
-          'Site Preparation — customer provides clear, level access, and pre-marks any property lines.',
-          'Change Orders — no changes accepted post-signout without written change order.',
-          'Installation Details — tolerance from finish grade applies. Not responsible for vegetation, irrigation, or sprinkler lines.',
-          'Labor Considerations — bid based on non-union labor unless PLA is not required.',
-          'Delays & Additional Costs — additional charges may apply for site conditions, plus any suspended change order down days.',
-          'Material Finish — inconsistencies in integral color may occur.',
-          'Estimate Validity — 30-day validity, 10% cancellation fee.'
+          'Compliance | Engineered per the latest California Building Code.',
+          'Site Preparation | Customer provides clear, level access and a pre-staked fence line offset. Staging/lay-down area required for materials and equipment, with clear access to the fence line for equipment usage.',
+          'Change Orders | No changes accepted post-layout without written change orders.',
+          'Installation Details | 2” tolerance from finish grade. Not responsible for vegetation, irrigation, or sprinkler lines.',
+          'Labor Considerations | Bid based on non-union labor, union PLA not included. Excludes prevailing wage.',
+          'Delays & Additional Costs | $7,500 re-mobilization fee if halted by site conditions, plus any sequence change or down days. Staging area near the fence line required. Additional services billed at $500/hr.',
+          'Material Finish | Inconsistencies in integral color may occur. Hairline cracks are a normal appearance for concrete.',
+          'Estimate Validity | 30-day validity. 10% cancellation fee. Escalation applies if the start date is beyond 6 months.'
         ].join('\n'),
         exclusions: [
           'Permits, insurance, and bonds',
           'Engineering drawings and calcs',
           'Electrical, gate automation, bollards',
-          'Soil export/import, dewatering, obstructions',
+          'Dewatering, obstructions',
           'Traffic control, signage',
           'Temporary fencing, mow strips, curbs',
-          'Rebar, embeds, or post sleeves',
+          'Grading or survey work',
+          'Potholing, hand digging, or hand installation',
           'Dust control'
         ].join('\n'),
         legalProtections: [
-          'Indemnity — client holds contractor harmless from job-site claims related to work performed.',
-          'Force Majeure — contractor not liable for delays caused by acts of God, strikes, or government interference.',
-          'Dispute Resolution — all disputes settled via binding arbitration through the American Arbitration Association.',
-          'Limitation of Liability — contractor not responsible for indirect, special, or punitive damages.'
+          'Indemnity | Client holds contractor harmless from jobsite claims related to work performed.',
+          'Force Majeure | Contractor not liable for delays caused by acts of God, strikes, or government interference.',
+          'Dispute Resolution | All disputes settled via binding arbitration through the American Arbitration Association.',
+          'Limitation of Liability | Contractor not responsible for indirect, special, or punitive damages.'
         ].join('\n'),
         nextSteps: [
-          'Engineering Finalization — our team will schedule a walkthrough (if needed) to review layout, staging, and access.',
-          'Contract & Schedule Lock-In — once everything is confirmed, we\'ll finalize the agreement and lock in your installation schedule.',
-          'Permits & Fabrication Prep — after permits are issued, we\'ll begin fabricating and prepping materials for your project.',
-          'Kickoff & Mobilization — we\'ll roll out our crew, equipment, and materials to the site on the agreed start date.',
-          'Admin & Support — need help with paperwork, warranties, or documentation? Our admin crew is here to help.'
+          'Engineering Finalization | Our team will complete a detailed engineering review to confirm that all specs — especially footing sizes and layout — match your site conditions and budget. This locks in accuracy and keeps surprises off your plate.',
+          'On-Site Walk Through | We\'ll schedule a walk through with you (or your site lead) to review logistics, staging, and access. This step ensures that installation goes off without a hitch — and gives us both a chance to align on the game plan.',
+          'Contract & Schedule Lock-In | Once everything\'s confirmed, we\'ll finalize the agreement and lock in your installation schedule. No fine print, no delays — just clear terms and a committed timeline.',
+          'Permits & Fabrication Prep | After permits are issued, we\'ll move straight into fabrication and begin prepping materials for delivery. You\'ll get regular updates so you\'re never left guessing where we\'re at.',
+          'Kickoff & Mobilization | We\'ll roll out our crew, equipment, and materials to your site on the agreed start date — ready to install with precision and care. From day one, you\'ll feel the difference in how we operate.',
+          'Admin & Support | Need help with paperwork, warranties, or documentation for your team or city? Our admin crew\'s on it. We\'re proactive, fast, and always ready to make your life easier.',
+          'Wage Compliance (If Applicable) | If your project requires prevailing wage or union labor, please provide your DIR number or project requirements. We\'ll handle the rest to ensure full compliance and a smooth audit trail.'
         ].join('\n'),
         createdAt: Date.now()
       };
@@ -1315,6 +1320,10 @@ function blankDeal() {
     repName: '',
     date: todayStr(),
     jobNumber: '', // Buildertrend # / Job-Bid # — shared by the Handoff Sheet and Engineering Order tabs
+    productDesign: '', // e.g. "Smoothstone" — shown on the client proposal's Scope of Work
+    colorFinish: '', // e.g. "Sequoia Sandstone Integral"
+    linearFeet: '', // e.g. "115"
+    wallHeightSpec: '', // e.g. "6"
     jobSite: { propertyType: '', accessDifficulty: '', notes: '' },
     sections: DEFAULT_SECTIONS.map(name => ({ id: uid('sec'), name, items: [] })),
     attachments: [],
@@ -1524,6 +1533,19 @@ function itemCalc(item) {
   return { builderCost, unitPrice, clientPrice, profit, margin };
 }
 
+// Client proposals show an "Items" / "Description" pair per line, not the
+// cost breakdown's Qty/Unit/Price — no per-item pricing at all, just a
+// single grand total at the end. Items imported from an estimate file are
+// stored as "Title - Description" (see parseEstimateRows); split that back
+// apart here. Manually-typed items have no such split, so the whole desc
+// just becomes the Items column with a blank Description.
+function proposalItemColumns(item) {
+  const desc = item.desc || '';
+  const dashIdx = desc.indexOf(' - ');
+  if (dashIdx === -1) return { items: desc || '—', description: '' };
+  return { items: desc.slice(0, dashIdx), description: desc.slice(dashIdx + 3) };
+}
+
 function sectionTotals(section) {
   return section.items.reduce((acc, item) => {
     const c = itemCalc(item);
@@ -1646,7 +1668,6 @@ function renderAttachmentCard(a, opts) {
   const preview = isImage
     ? `<div class="attachment-thumb" onclick="openLightbox('${a.dataUrl}')">
         <img src="${a.dataUrl}" alt="${esc(a.name)}">
-        <div class="file-name">${esc(a.name)}</div>
       </div>`
     : `<a class="attachment-thumb attachment-file" href="${a.dataUrl}" target="_blank" rel="noopener" download="${esc(a.name)}">
         <div class="file-icon">📄</div>
@@ -1677,11 +1698,38 @@ function downloadBlob(blob, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 
+// Real, fixed business identity for client-facing documents — separate from
+// the "Fence Installers" branding used inside the app itself. Hardcoded
+// because it's the company's legal letterhead, not something that varies
+// per deal.
+const COMPANY_LETTERHEAD = {
+  name: 'Concrete Fence Installers, Inc.',
+  addressLine: '1143 W 2nd St  •  Pomona, CA 91766-1308  •  Phone: 6264430970',
+  license: 'CSLB LIC # 1057703',
+  logoFile: 'american-precast-logo.png',
+  logoWidth: 70,
+  logoHeight: 76
+};
+
+let cachedLetterheadLogo = null;
+async function loadLetterheadLogo() {
+  if (cachedLetterheadLogo) return cachedLetterheadLogo;
+  const resp = await fetch(COMPANY_LETTERHEAD.logoFile);
+  const buf = await resp.arrayBuffer();
+  cachedLetterheadLogo = new Uint8Array(buf);
+  return cachedLetterheadLogo;
+}
+
 // Builds a real, fully-editable .docx from a deal + template using the docx
 // library (loaded on demand, only when a proposal is actually downloaded —
-// no reason to ship this to everyone who's just approving deals).
+// no reason to ship this to everyone who's just approving deals). Layout
+// mirrors the company's actual signed proposal letterhead/format: logo +
+// letterhead, Job Address block, Scope of Work with product specs, one
+// Items/Description table per cost-breakdown section (no per-item pricing —
+// only a single Total price at the end), then Conditions, Exclusions,
+// Legal Protections, and Next Steps.
 async function buildProposalDocx(docxLib, d, template) {
-  const { Document, Paragraph, TextRun, HeadingLevel, AlignmentType, Table, TableRow, TableCell, WidthType, Packer } = docxLib;
+  const { Document, Paragraph, TextRun, ImageRun, HeadingLevel, AlignmentType, Table, TableRow, TableCell, WidthType, Packer } = docxLib;
 
   function cell(text, opts) {
     opts = opts || {};
@@ -1689,97 +1737,132 @@ async function buildProposalDocx(docxLib, d, template) {
       children: [new Paragraph({ children: [new TextRun({ text: text, bold: !!opts.bold })], alignment: opts.align || AlignmentType.LEFT })]
     };
     if (opts.width) params.width = { size: opts.width, type: WidthType.PERCENTAGE };
-    if (opts.columnSpan) params.columnSpan = opts.columnSpan;
     return new TableCell(params);
   }
-
-  const lineItemRows = [];
-  lineItemRows.push(new TableRow({
-    children: [
-      cell('Description', { bold: true, width: 55 }),
-      cell('Qty', { bold: true, width: 10, align: AlignmentType.CENTER }),
-      cell('Unit', { bold: true, width: 15, align: AlignmentType.CENTER }),
-      cell('Price', { bold: true, width: 20, align: AlignmentType.RIGHT })
-    ]
-  }));
-
-  d.sections.forEach((sec) => {
-    if (!sec.items.length) return;
-    lineItemRows.push(new TableRow({
-      children: [cell(sec.name, { bold: true, columnSpan: 4 })]
-    }));
-    sec.items.forEach((item) => {
-      const c = itemCalc(item);
-      lineItemRows.push(new TableRow({
-        children: [
-          cell(item.desc || '—'),
-          cell(String(item.qty), { align: AlignmentType.CENTER }),
-          cell(item.unit || '', { align: AlignmentType.CENTER }),
-          cell(money(c.clientPrice), { align: AlignmentType.RIGHT })
-        ]
-      }));
-    });
-  });
-
-  const itemsTable = new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: lineItemRows });
 
   function heading(text) {
     return new Paragraph({ text, heading: HeadingLevel.HEADING_2, spacing: { before: 300, after: 150 } });
   }
+  function coloredHeading(text) {
+    return new Paragraph({ children: [new TextRun({ text, bold: true, size: 28, color: '2E74B5' })], spacing: { before: 300, after: 150 } });
+  }
   function para(text) {
-    return new Paragraph({ children: [new TextRun(text)], spacing: { after: 120 } });
+    return new Paragraph({ children: [new TextRun(text || '')], spacing: { after: 120 } });
+  }
+  function centered(text, opts) {
+    opts = opts || {};
+    return new Paragraph({ children: [new TextRun({ text, bold: !!opts.bold })], alignment: AlignmentType.CENTER, spacing: { after: opts.after != null ? opts.after : 60 } });
   }
   function splitLines(text) {
     return (text || '').split('\n').map((s) => s.trim()).filter(Boolean);
   }
-  function numbered(text) {
-    return splitLines(text).map((line, i) => para((i + 1) + '. ' + line));
-  }
   function bulleted(text) {
     return splitLines(text).map((line) => para('• ' + line));
   }
+  // Each template line can be "Title | Description" — rendered as a bold
+  // (optionally numbered/colored) title followed by a plain paragraph — or
+  // just plain text with no title, for a simple flat list.
+  function titledBlocks(text, opts) {
+    opts = opts || {};
+    const out = [];
+    splitLines(text).forEach((line, i) => {
+      const prefix = opts.numbered ? (i + 1) + '. ' : '';
+      const pipeIdx = line.indexOf('|');
+      if (pipeIdx === -1) {
+        out.push(para(prefix + line));
+        return;
+      }
+      const title = line.slice(0, pipeIdx).trim();
+      const desc = line.slice(pipeIdx + 1).trim();
+      out.push(new Paragraph({
+        children: [new TextRun({ text: prefix + title, bold: true, color: opts.titleColor })],
+        spacing: { before: 140, after: 40 }
+      }));
+      if (desc) out.push(para(desc));
+    });
+    return out;
+  }
 
   const children = [];
-  children.push(new Paragraph({ text: 'Fence Installers', heading: HeadingLevel.TITLE, alignment: AlignmentType.CENTER }));
-  children.push(new Paragraph({ text: 'Proposal', heading: HeadingLevel.HEADING_1, alignment: AlignmentType.CENTER, spacing: { after: 300 } }));
 
-  children.push(para('Date: ' + (d.date || '')));
-  children.push(new Paragraph({ children: [new TextRun({ text: 'Prepared For', bold: true })], spacing: { before: 200, after: 100 } }));
-  if (d.customerName) children.push(para(d.customerName));
-  if (d.company) children.push(para(d.company));
-  if (d.email) children.push(para(d.email));
-  const addressLine = fullAddressLine(d);
-  if (addressLine) children.push(para(addressLine));
-
-  if (template.scopeIntro) {
-    children.push(heading('Scope of Work'));
-    children.push(para(template.scopeIntro));
+  // Letterhead
+  try {
+    const logoData = await loadLetterheadLogo();
+    children.push(new Paragraph({
+      children: [new ImageRun({ data: logoData, transformation: { width: COMPANY_LETTERHEAD.logoWidth, height: COMPANY_LETTERHEAD.logoHeight }, type: 'png' })],
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 80 }
+    }));
+  } catch (e) {
+    // Logo is a nice-to-have — the proposal is still complete without it if the fetch fails.
   }
-  if (template.scopeSteps) children.push(...numbered(template.scopeSteps));
+  children.push(centered(COMPANY_LETTERHEAD.name, { bold: true, after: 40 }));
+  children.push(centered(COMPANY_LETTERHEAD.addressLine, { after: 20 }));
+  children.push(centered(COMPANY_LETTERHEAD.license, { after: 240 }));
 
-  children.push(heading('Line Items & Pricing'));
-  children.push(itemsTable);
-  children.push(new Paragraph({ children: [new TextRun({ text: 'Total Price: ' + money(dealClientPrice(d)), bold: true })], spacing: { before: 200, after: 120 } }));
+  // Job Address
+  children.push(new Paragraph({ children: [new TextRun({ text: 'Job Address:', bold: true })], spacing: { after: 20 } }));
+  if (d.address) children.push(para(d.address));
+  const cityStateZip = [d.city, [d.state, d.zip].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+  if (cityStateZip) children.push(para(cityStateZip));
+
+  const nameLine = (d.customerName || '') + (d.company ? ' — ' + d.company : '');
+  if (nameLine) children.push(new Paragraph({ children: [new TextRun(nameLine)], spacing: { before: 120, after: 200 } }));
+
+  if (template.scopeIntro) children.push(para(template.scopeIntro));
+
+  children.push(heading('Scope of Work'));
+  const specLines = [];
+  if (d.productDesign) specLines.push(['Product Design', d.productDesign]);
+  if (d.colorFinish) specLines.push(['Color', d.colorFinish]);
+  if (d.linearFeet) specLines.push(['Linear Feet', d.linearFeet + ' LF']);
+  if (d.wallHeightSpec) specLines.push(['Height', d.wallHeightSpec + 'H']);
+  specLines.forEach(([label, value]) => {
+    children.push(new Paragraph({ children: [new TextRun({ text: label + ': ', bold: true }), new TextRun(value)], spacing: { after: 40 } }));
+  });
+  if (template.scopeSteps) children.push(...titledBlocks(template.scopeSteps, { numbered: true }));
+
+  // One Items/Description table per cost-breakdown section — no per-item
+  // pricing anywhere; only the single grand total below every table.
+  d.sections.filter((sec) => sec.items.length).forEach((sec) => {
+    children.push(new Paragraph({ children: [new TextRun({ text: sec.name, bold: true })], spacing: { before: 220, after: 80 } }));
+    const rows = [new TableRow({
+      children: [cell('Items', { bold: true, width: 30 }), cell('Description', { bold: true, width: 70 })]
+    })];
+    sec.items.forEach((item) => {
+      const cols = proposalItemColumns(item);
+      rows.push(new TableRow({ children: [cell(cols.items), cell(cols.description)] }));
+    });
+    children.push(new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows }));
+  });
+
+  children.push(new Paragraph({
+    children: [new TextRun({ text: 'Total price:    ' + money(dealClientPrice(d)), bold: true })],
+    spacing: { before: 200, after: 200 }
+  }));
 
   if (template.conditions) {
     children.push(heading('Project Conditions & Requirements'));
-    children.push(...numbered(template.conditions));
+    children.push(...titledBlocks(template.conditions, { numbered: true }));
   }
   if (template.exclusions) {
     children.push(heading('Conditions & Exclusions'));
+    children.push(para('This proposal excludes:'));
     children.push(...bulleted(template.exclusions));
   }
   if (template.legalProtections) {
     children.push(heading('Legal Protections'));
-    children.push(...numbered(template.legalProtections));
+    children.push(...titledBlocks(template.legalProtections, { numbered: true }));
   }
   if (template.nextSteps) {
-    children.push(heading('Next Steps'));
-    children.push(...numbered(template.nextSteps));
+    children.push(coloredHeading('Next Steps — Partnering for a Smooth Build'));
+    children.push(para('We appreciate the opportunity to work with you. Our goal is to make this process simple, stress-free, and dialed-in from day one. Here’s how we move forward together:'));
+    children.push(...titledBlocks(template.nextSteps, { numbered: true, titleColor: '2E74B5' }));
   }
 
-  children.push(heading('Acceptance'));
-  children.push(para('By signing below, I approve this proposal and authorize work to proceed.'));
+  children.push(coloredHeading('Let’s Get Started'));
+  children.push(para("To move forward, just reply to this proposal or contact our team directly. We're here to walk you through every step and ensure a smooth, on-time, on-budget build."));
+  children.push(para('I confirm that my action here represents my electronic signature and is binding.'));
   children.push(para('Signature: _______________________________          Date: ______________'));
   children.push(para('Printed Name: ___________________________'));
 
@@ -2285,6 +2368,7 @@ const App = {
   },
 
   removeAttachment(attId) {
+    if (!confirm('Delete this attachment? This cannot be undone.')) return;
     draftDeal.attachments = draftDeal.attachments.filter(a => a.id !== attId);
     render();
   },
@@ -2402,6 +2486,7 @@ const App = {
   },
 
   async removeAttachmentFromDeal(dealId, attId) {
+    if (!confirm('Delete this attachment? This cannot be undone.')) return;
     const d = deals.find(x => x.id === dealId);
     if (!d) return;
     d.attachments = (d.attachments || []).filter(a => a.id !== attId);
@@ -2753,6 +2838,21 @@ function renderForm() {
   </div>
 
   <div class="panel">
+    <h2>Product Specs</h2>
+    <p class="attach-hint" style="margin-top:-6px;">Shown on the client proposal's Scope of Work section.</p>
+    <div class="field-grid">
+      <div><label class="field-label">Product Design</label>
+        <input type="text" placeholder="e.g. Smoothstone" value="${esc(d.productDesign)}" oninput="App.updateHeaderField('productDesign', this.value)"></div>
+      <div><label class="field-label">Color</label>
+        <input type="text" placeholder="e.g. Sequoia Sandstone Integral" value="${esc(d.colorFinish)}" oninput="App.updateHeaderField('colorFinish', this.value)"></div>
+      <div><label class="field-label">Linear Feet</label>
+        <input type="text" placeholder="e.g. 115" value="${esc(d.linearFeet)}" oninput="App.updateHeaderField('linearFeet', this.value)"></div>
+      <div><label class="field-label">Height</label>
+        <input type="text" placeholder="e.g. 6" value="${esc(d.wallHeightSpec)}" oninput="App.updateHeaderField('wallHeightSpec', this.value)"></div>
+    </div>
+  </div>
+
+  <div class="panel">
     <h2>Job Site Specifics</h2>
     <div class="field-grid">
       <div><label class="field-label">Property Type</label>
@@ -2790,8 +2890,12 @@ function renderForm() {
     <h2>Attachments</h2>
     <div class="attach-btn-row">
       <label class="btn btn-outline btn-small" style="cursor:pointer;">
+        📷 Take Photo
+        <input type="file" accept="image/*" capture="environment" style="display:none;" onchange="App.handleFiles(this.files); this.value='';">
+      </label>
+      <label class="btn btn-outline btn-small" style="cursor:pointer;">
         + Add Attachments
-        <input type="file" accept="image/*,application/pdf" multiple capture="environment" style="display:none;" onchange="App.handleFiles(this.files); this.value='';">
+        <input type="file" accept="image/*,application/pdf" multiple style="display:none;" onchange="App.handleFiles(this.files); this.value='';">
       </label>
       <span class="attach-hint">Photos, contracts, and site plans — images are compressed automatically before saving.</span>
     </div>
@@ -2917,8 +3021,12 @@ function renderDetail() {
     <h2>Attachments</h2>
     <div class="attach-btn-row">
       <label class="btn btn-outline btn-small" style="cursor:pointer;">
+        📷 Take Photo
+        <input type="file" accept="image/*" capture="environment" style="display:none;" onchange="App.addAttachmentsToDeal('${d.id}', this.files); this.value='';">
+      </label>
+      <label class="btn btn-outline btn-small" style="cursor:pointer;">
         + Add Attachments
-        <input type="file" accept="image/*,application/pdf" multiple capture="environment" style="display:none;" onchange="App.addAttachmentsToDeal('${d.id}', this.files); this.value='';">
+        <input type="file" accept="image/*,application/pdf" multiple style="display:none;" onchange="App.addAttachmentsToDeal('${d.id}', this.files); this.value='';">
       </label>
       <span class="attach-hint">Photos, contracts, and site plans — images are compressed automatically before saving.</span>
     </div>
@@ -3339,11 +3447,11 @@ function renderTemplates() {
         <button class="btn btn-danger btn-small" onclick="App.removeTemplate('${t.id}')">Delete Template</button>
       </div>
       ${templateEditorField(t.id, 'scopeIntro', 'Scope of Work — Intro Paragraph', t.scopeIntro, 3)}
-      ${templateEditorField(t.id, 'scopeSteps', 'Scope of Work — Steps (one per line)', t.scopeSteps, 4)}
-      ${templateEditorField(t.id, 'conditions', 'Project Conditions &amp; Requirements (one per line)', t.conditions, 4)}
-      ${templateEditorField(t.id, 'exclusions', 'Conditions &amp; Exclusions (one per line)', t.exclusions, 4)}
-      ${templateEditorField(t.id, 'legalProtections', 'Legal Protections (one per line)', t.legalProtections, 3)}
-      ${templateEditorField(t.id, 'nextSteps', 'Next Steps (one per line)', t.nextSteps, 4)}
+      ${templateEditorField(t.id, 'scopeSteps', 'Scope of Work — Steps (one per line: "Title | Description", or just plain text)', t.scopeSteps, 4)}
+      ${templateEditorField(t.id, 'conditions', 'Project Conditions &amp; Requirements (one per line: "Title | Description")', t.conditions, 4)}
+      ${templateEditorField(t.id, 'exclusions', 'Conditions &amp; Exclusions (one per line, plain bullets)', t.exclusions, 4)}
+      ${templateEditorField(t.id, 'legalProtections', 'Legal Protections (one per line: "Title | Description")', t.legalProtections, 3)}
+      ${templateEditorField(t.id, 'nextSteps', 'Next Steps (one per line: "Title | Description")', t.nextSteps, 4)}
     </div>`).join('');
 
   return `
@@ -3369,24 +3477,20 @@ function renderProposal() {
   const d = deals.find(x => x.id === currentDealId);
   if (!d) return `<div class="empty-state">Deal not found.<div class="back-link" onclick="App.goList()">&larr; Back</div></div>`;
 
-  const lineItemsHtml = d.sections.map(sec => {
+  const lineItemsHtml = d.sections.filter(sec => sec.items.length).map(sec => {
     const rows = sec.items.map(item => {
-      const c = itemCalc(item);
+      const cols = proposalItemColumns(item);
       return `<tr>
-        <td class="col-desc">${esc(item.desc || '—')}</td>
-        <td class="num">${item.qty}</td>
-        <td>${esc(item.unit)}</td>
-        <td class="num">${money(c.clientPrice)}</td>
+        <td class="col-desc">${esc(cols.items)}</td>
+        <td>${esc(cols.description)}</td>
       </tr>`;
     }).join('');
-    const t = sectionTotals(sec);
     return `<div class="section-block">
       <div class="section-head"><strong>${esc(sec.name)}</strong></div>
       <div class="table-scroll">
       <table class="items">
-        <thead><tr><th class="col-desc">Description</th><th>Qty</th><th>Unit</th><th>Price</th></tr></thead>
+        <thead><tr><th class="col-desc">Items</th><th>Description</th></tr></thead>
         <tbody>${rows}</tbody>
-        <tfoot><tr class="subtotal"><td class="label-cell" colspan="3">Section Subtotal</td><td>${money(t.clientPrice)}</td></tr></tfoot>
       </table>
       </div>
     </div>`;
@@ -3431,8 +3535,23 @@ function renderProposal() {
   </div>
 
   <div class="panel">
-    <h2>Line Items &amp; Pricing</h2>
-    <p class="attach-hint" style="margin-top:-6px;">Only description and client price show on the proposal — cost, markup, and margin stay internal.</p>
+    <h2>Product Specs</h2>
+    <p class="attach-hint" style="margin-top:-6px;">Shown on the proposal's Scope of Work section.</p>
+    <div class="field-grid">
+      <div><label class="field-label">Product Design</label>
+        <input type="text" value="${esc(d.productDesign)}" onchange="App.updateDealField('${d.id}','productDesign', this.value)"></div>
+      <div><label class="field-label">Color</label>
+        <input type="text" value="${esc(d.colorFinish)}" onchange="App.updateDealField('${d.id}','colorFinish', this.value)"></div>
+      <div><label class="field-label">Linear Feet</label>
+        <input type="text" value="${esc(d.linearFeet)}" onchange="App.updateDealField('${d.id}','linearFeet', this.value)"></div>
+      <div><label class="field-label">Height</label>
+        <input type="text" value="${esc(d.wallHeightSpec)}" onchange="App.updateDealField('${d.id}','wallHeightSpec', this.value)"></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Scope Items</h2>
+    <p class="attach-hint" style="margin-top:-6px;">Only item names and descriptions show on the proposal — cost, markup, and per-item pricing stay internal. Just the total price shows, at the end.</p>
     ${lineItemsHtml}
     <div class="totals-bar">
       <div class="stat"><div class="stat-label">Total Price</div><div class="stat-value">${money(dealClientPrice(d))}</div></div>
