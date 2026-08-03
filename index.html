@@ -378,6 +378,58 @@
   .col-desc { min-width: 160px; }
   .col-action { width: 34px; text-align: center; }
 
+  /* Handoff Sheet / Engineering Order tabs — styled to echo the printed
+     forms they replace: navy section bars, checklist tables with a
+     checkbox column, and light-blue table headers for data grids. */
+  .doc-form-bar {
+    background: #1F3864;
+    color: #fff;
+    font-weight: 700;
+    font-size: 13.5px;
+    padding: 9px 14px;
+    border-radius: 6px 6px 0 0;
+    margin-top: 18px;
+  }
+  .doc-form-bar:first-of-type { margin-top: 0; }
+  .doc-form-section {
+    border: 1px solid var(--line);
+    border-radius: 0 0 6px 6px;
+    border-top: none;
+    padding: 14px;
+    margin-bottom: 4px;
+    box-shadow: var(--shadow-xs);
+  }
+  table.checklist { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  table.checklist th {
+    background: #1F3864;
+    color: #fff;
+    text-align: left;
+    font-size: 11.5px;
+    padding: 7px 10px;
+  }
+  table.checklist td { padding: 6px 8px; border-bottom: 1px solid var(--row-border); vertical-align: middle; }
+  table.checklist td.col-check { width: 34px; text-align: center; }
+  table.checklist td.col-check input[type=checkbox] { width: 18px; height: 18px; cursor: pointer; }
+  table.checklist td.col-item { width: 40%; }
+  table.checklist td.col-notes input { padding: 6px 8px; font-size: 13px; }
+  table.grid-table { width: 100%; border-collapse: collapse; font-size: 13.5px; margin-bottom: 10px; }
+  table.grid-table th {
+    background: var(--panel-alt);
+    text-align: left;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    color: var(--muted);
+    padding: 7px 8px;
+    border-bottom: 1px solid var(--line);
+  }
+  table.grid-table td { padding: 5px 6px; border-bottom: 1px solid var(--row-border); }
+  table.grid-table td input { padding: 6px 8px; font-size: 13px; }
+  .check-option-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+  .check-option-row input[type=checkbox], .check-option-row input[type=radio] { width: 17px; height: 17px; cursor: pointer; }
+  .check-option-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 4px 16px; }
+  .doc-download-row { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+
   .totals-bar {
     display: flex;
     gap: 24px;
@@ -1155,6 +1207,7 @@ let currentView = 'list';
 let currentFilter = 'all';
 let draftDeal = null;
 let currentDealId = null;
+let detailTab = 'overview'; // 'overview' | 'handoff' | 'engineering', for the deal detail view's tab bar
 let storageError = false;
 let storageErrorDetail = '';
 
@@ -1261,6 +1314,7 @@ function blankDeal() {
     zip: '',
     repName: '',
     date: todayStr(),
+    jobNumber: '', // Buildertrend # / Job-Bid # — shared by the Handoff Sheet and Engineering Order tabs
     jobSite: { propertyType: '', accessDifficulty: '', notes: '' },
     sections: DEFAULT_SECTIONS.map(name => ({ id: uid('sec'), name, items: [] })),
     attachments: [],
@@ -1273,6 +1327,140 @@ function blankDeal() {
 
 function blankItem() {
   return { id: uid('item'), desc: '', qty: 1, unit: 'each', unitCost: 0, costType: 'Material', markupPercent: 25 };
+}
+
+// Sets a nested value by path (array of keys/indices), creating no
+// intermediate objects — used for the Handoff Sheet / Engineering Order
+// forms, whose fields are addressed as ['section','key','subkey'] paths.
+function setPath(obj, path, value) {
+  let cur = obj;
+  for (let i = 0; i < path.length - 1; i++) cur = cur[path[i]];
+  cur[path[path.length - 1]] = value;
+}
+
+// ---------- Handoff Sheet (Sales -> Project Coordinator) ----------
+// Mirrors the printed "APC / CFI Sales to Project Coordinator Handoff
+// Checklist" — same section groupings and checklist item wording, each
+// item paired with a checkbox and a free-text notes field.
+const HANDOFF_SECTIONS = [
+  { title: 'Project Release Documents', items: [
+    ['signedContract', 'Signed Contract'],
+    ['finalProposal', 'Final Proposal'],
+    ['depositReceived', 'Deposit Received'],
+    ['buildertrendJobCreated', 'Buildertrend Job Created'],
+    ['intakeSheetCompleted', 'Intake Sheet Completed'],
+    ['scheduleOfValuesUploaded', 'Schedule of Values Uploaded'],
+    ['engineeringOrderSubmitted', 'Engineering Order Submitted (if required)'],
+    ['customerIntroducedToPC', 'Customer Introduced to PC']
+  ]},
+  { title: 'Project Information', items: [
+    ['layoutUploaded', 'Layout Uploaded'],
+    ['productConfirmed', 'Product Confirmed'],
+    ['textureConfirmed', 'Texture Confirmed'],
+    ['colorConfirmed', 'Color Confirmed'],
+    ['wallHeightsVerified', 'Wall Heights Verified'],
+    ['linearFootageVerified', 'Linear Footage Verified'],
+    ['gatesVerified', 'Gates Verified'],
+    ['inclusionsReviewed', 'Inclusions Reviewed'],
+    ['exclusionsReviewed', 'Exclusions Reviewed']
+  ]},
+  { title: 'Engineering & Site', items: [
+    ['soilsReport', 'Soils Report'],
+    ['survey', 'Survey'],
+    ['civilPlans', 'Civil Plans'],
+    ['retainingSectionsIdentified', 'Retaining Sections Identified'],
+    ['accessVerified', 'Access Verified'],
+    ['pumpRequiredReviewed', 'Pump Required Reviewed'],
+    ['materialStagingArea', 'Material Staging Area'],
+    ['spoilsArea', 'Spoils Area'],
+    ['requiredPhotosUploaded', 'Required Photos Uploaded']
+  ]},
+  { title: 'Buildertrend Review', items: [
+    ['proposalUploaded', 'Proposal Uploaded'],
+    ['photosUploaded', 'Photos Uploaded'],
+    ['engineeringUploaded', 'Engineering Uploaded'],
+    ['layoutUploadedBtr', 'Layout Uploaded'],
+    ['customerNotesComplete', 'Customer Notes Complete'],
+    ['internalNotesComplete', 'Internal Notes Complete']
+  ]}
+];
+
+const HANDOFF_CERTIFICATION_ITEMS = [
+  ['reviewedScope', 'Reviewed scope with Project Coordinator'],
+  ['reviewedExpectations', 'Reviewed customer expectations'],
+  ['reviewedSchedule', 'Reviewed schedule and commitments'],
+  ['reviewedRisks', 'Reviewed risks and change order opportunities'],
+  ['uploadedDocs', 'Uploaded all required documents to Buildertrend']
+];
+
+// Lazily built the first time a deal's Handoff tab is opened, and prefilled
+// from whatever the deal already knows (customer/rep) — everything else is
+// a manual sales/PC sign-off step with no deal-data equivalent to pull from.
+function blankHandoff(d) {
+  const items = {};
+  HANDOFF_SECTIONS.forEach(sec => sec.items.forEach(([key]) => { items[key] = { checked: false, notes: '' }; }));
+  const certification = {};
+  HANDOFF_CERTIFICATION_ITEMS.forEach(([key]) => { certification[key] = false; });
+  return {
+    projectCoordinator: '',
+    items,
+    briefing: {
+      biggestRisk: '', customerExpectation: '', changeOrderRisk: '', opsNotes: '',
+      scheduleStart: '', scheduleFinish: '', promisedDates: '',
+      schedulingConstraints: '', promisesToCustomer: ''
+    },
+    certification,
+    signatures: {
+      salesperson: (d && d.repName) || '', salespersonDate: '',
+      pc: '', pcDate: '', opsApproval: '', opsDate: ''
+    }
+  };
+}
+
+// ---------- Engineering Order Form (Standard 5' O.C. Precast Materials) ----------
+const ENGINEERING_COMPONENTS = [
+  ['panels', 'Panels'], ['posts', 'Posts'], ['postCaps', 'Post Caps'], ['panelCaps', 'Panel Caps']
+];
+const ENGINEERING_SPECIAL_CRITERIA = [
+  ['slopedFenceLine', 'Sloped fence line / step-downs'],
+  ['specialWind', 'Special wind requirement'],
+  ['specialSeismic', 'Special seismic requirement'],
+  ['fireRating', 'Fire-rating requirement'],
+  ['bioswale', 'Bioswale / bio-retention condition'],
+  ['groundwater', 'Groundwater / dewatering concern'],
+  ['propertyLine', 'Property-line / restricted access'],
+  ['otherCriteria', 'Other special criteria']
+];
+
+function blankWallHeightRow() {
+  return { wallHeight: '', retainingHeight: '', approxLF: '', condition: '' };
+}
+
+function blankEngineering(d) {
+  const componentsRequired = {};
+  ENGINEERING_COMPONENTS.forEach(([key]) => { componentsRequired[key] = false; });
+  const specialCriteria = {};
+  ENGINEERING_SPECIAL_CRITERIA.forEach(([key]) => { specialCriteria[key] = false; });
+  return {
+    requestedBy: (d && d.repName) || '',
+    requestDate: todayStr(),
+    countyJurisdiction: '',
+    materialType: '', texturePattern: '',
+    componentsRequired, otherComponents: '',
+    wallHeights: [blankWallHeightRow(), blankWallHeightRow(), blankWallHeightRow(), blankWallHeightRow()],
+    retainingOption: '', // '' | 'none' | 'required'
+    maxRetainingHeight: '',
+    footingDesignsNeeded: '', footingDescribe: '',
+    soilsReportStatus: '', // '' | 'attached' | 'not_attached' | 'not_available'
+    civilPlansStatus: '',
+    otherPlansDocs: '',
+    specialCriteria, specialCriteriaDescribe: '',
+    gatesAttach: '', // '' | 'no' | 'yes'
+    gateTypeQtySize: '', attachmentMethod: '',
+    gateDrawingsStatus: '', // '' | 'attached' | 'not_attached'
+    scopeNotes: '',
+    submittedBy: (d && d.repName) || '', reviewedBy: '', reviewDate: ''
+  };
 }
 
 // Turns the raw rows from an uploaded cost-estimate export (BuilderTrend-style
@@ -1475,6 +1663,20 @@ function renderAttachmentCard(a, opts) {
   </div>`;
 }
 
+// Triggers a browser download for an in-memory Blob — shared by every
+// "Download as Word (.docx)" button (Proposal, Handoff Sheet, Engineering
+// Order) so there's one place that owns the object-URL lifecycle.
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
 // Builds a real, fully-editable .docx from a deal + template using the docx
 // library (loaded on demand, only when a proposal is actually downloaded —
 // no reason to ship this to everyone who's just approving deals).
@@ -1585,6 +1787,210 @@ async function buildProposalDocx(docxLib, d, template) {
   return Packer.toBlob(doc);
 }
 
+// Mirrors the printed "APC / CFI Sales to Project Coordinator Handoff
+// Checklist" — checkbox glyphs (☐/☑) stand in for real form checkboxes,
+// same as the original PDF uses, since docx has no native checkbox control.
+async function buildHandoffDocx(docxLib, d) {
+  const { Document, Paragraph, TextRun, HeadingLevel, AlignmentType, Table, TableRow, TableCell, WidthType, ShadingType, Packer } = docxLib;
+  const h = d.handoff || blankHandoff(d);
+  const NAVY = '1F3864';
+
+  function cell(text, opts) {
+    opts = opts || {};
+    const runOpts = { text: text, bold: !!opts.bold };
+    if (opts.color) runOpts.color = opts.color;
+    const params = { children: [new Paragraph({ children: [new TextRun(runOpts)], alignment: opts.align || AlignmentType.LEFT })] };
+    if (opts.width) params.width = { size: opts.width, type: WidthType.PERCENTAGE };
+    if (opts.shading) params.shading = { fill: opts.shading, type: ShadingType.CLEAR, color: 'auto' };
+    return new TableCell(params);
+  }
+
+  function checklistTable(items) {
+    const rows = [new TableRow({
+      children: [
+        cell('', { width: 8, shading: NAVY }),
+        cell('Checklist Item', { bold: true, color: 'FFFFFF', shading: NAVY, width: 52 }),
+        cell('Notes', { bold: true, color: 'FFFFFF', shading: NAVY, width: 40 })
+      ]
+    })];
+    items.forEach(([key, label]) => {
+      const item = h.items[key] || { checked: false, notes: '' };
+      rows.push(new TableRow({
+        children: [
+          cell(item.checked ? '☑' : '☐', { align: AlignmentType.CENTER }),
+          cell(label),
+          cell(item.notes || '')
+        ]
+      }));
+    });
+    return new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows });
+  }
+
+  function heading(text) {
+    return new Paragraph({ children: [new TextRun({ text, bold: true })], spacing: { before: 260, after: 100 } });
+  }
+  function para(text) {
+    return new Paragraph({ children: [new TextRun(text || '')], spacing: { after: 100 } });
+  }
+  function fieldLine(label, value) {
+    return para(label + ': ' + (value || ''));
+  }
+
+  const children = [];
+  children.push(new Paragraph({ text: 'APC / CFI', alignment: AlignmentType.CENTER, heading: HeadingLevel.HEADING_2 }));
+  children.push(new Paragraph({ text: 'Sales to Project Coordinator Handoff Checklist', alignment: AlignmentType.CENTER, heading: HeadingLevel.HEADING_1, spacing: { after: 240 } }));
+
+  children.push(para('Project: ' + (d.customerName || '') + (d.company ? ' — ' + d.company : '') + '     Buildertrend #: ' + (d.jobNumber || '')));
+  children.push(para('Salesperson: ' + (d.repName || '') + '     Project Coordinator: ' + (h.projectCoordinator || '')));
+
+  HANDOFF_SECTIONS.forEach(sec => {
+    children.push(heading(sec.title));
+    children.push(checklistTable(sec.items));
+  });
+
+  children.push(heading('Sales Project Briefing (Required)'));
+  children.push(para('1. What is the biggest risk on this project?'));
+  children.push(para(h.briefing.biggestRisk));
+  children.push(para("2. What is the customer's biggest expectation?"));
+  children.push(para(h.briefing.customerExpectation));
+  children.push(para('3. What could cause a Change Order?'));
+  children.push(para(h.briefing.changeOrderRisk));
+  children.push(para('4. Is there anything Operations needs to know that is NOT obvious from the plans or proposal?'));
+  children.push(para(h.briefing.opsNotes));
+  children.push(para('5. Schedule & Customer Commitments'));
+  children.push(para('Start: ' + (h.briefing.scheduleStart || '') + '   Finish: ' + (h.briefing.scheduleFinish || '') + '   Promised Dates: ' + (h.briefing.promisedDates || '')));
+  children.push(para('Scheduling Constraints (HOA / City / Access / Deliveries / Other): ' + (h.briefing.schedulingConstraints || '')));
+  children.push(para('Promises Made to Customer:'));
+  children.push(para(h.briefing.promisesToCustomer));
+
+  children.push(heading('Final Certification'));
+  HANDOFF_CERTIFICATION_ITEMS.forEach(([key, label]) => {
+    children.push(para((h.certification[key] ? '☑ ' : '☐ ') + label));
+  });
+
+  children.push(heading('Sign-Off'));
+  children.push(fieldLine('Salesperson', h.signatures.salesperson));
+  children.push(fieldLine('Date', h.signatures.salespersonDate));
+  children.push(fieldLine('Project Coordinator', h.signatures.pc));
+  children.push(fieldLine('Date', h.signatures.pcDate));
+  children.push(fieldLine('Operations Approval', h.signatures.opsApproval));
+  children.push(fieldLine('Date', h.signatures.opsDate));
+
+  const doc = new Document({ sections: [{ children }] });
+  return Packer.toBlob(doc);
+}
+
+// Mirrors the printed "Engineering Order Form — Standard 5' O.C. Precast
+// Materials": navy section bars per numbered section, a light-shaded wall
+// height grid, and checkbox glyphs for every yes/no or multi-select field.
+async function buildEngineeringDocx(docxLib, d) {
+  const { Document, Paragraph, TextRun, AlignmentType, Table, TableRow, TableCell, WidthType, ShadingType, Packer } = docxLib;
+  const e = d.engineering || blankEngineering(d);
+  const NAVY = '1F3864';
+  const LIGHT = 'DCE6F1';
+
+  function cell(text, opts) {
+    opts = opts || {};
+    const runOpts = { text: text, bold: !!opts.bold };
+    if (opts.color) runOpts.color = opts.color;
+    const params = { children: [new Paragraph({ children: [new TextRun(runOpts)], alignment: opts.align || AlignmentType.LEFT })] };
+    if (opts.width) params.width = { size: opts.width, type: WidthType.PERCENTAGE };
+    if (opts.shading) params.shading = { fill: opts.shading, type: ShadingType.CLEAR, color: 'auto' };
+    return new TableCell(params);
+  }
+
+  function navyBar(text) {
+    return new Table({
+      width: { size: 100, type: WidthType.PERCENTAGE },
+      rows: [new TableRow({ children: [cell(text, { bold: true, color: 'FFFFFF', shading: NAVY, width: 100 })] })]
+    });
+  }
+
+  function para(text) {
+    return new Paragraph({ children: [new TextRun(text || '')], spacing: { after: 100 } });
+  }
+  function fieldPara(label, value) {
+    return para(label + ': ' + (value || ''));
+  }
+  function checkLine(pairs, valuesObj) {
+    return para(pairs.map(([key, label]) => (valuesObj[key] ? '☑ ' : '☐ ') + label).join('     '));
+  }
+  function statusLine(label, statusVal, options) {
+    return para(label + ':   ' + options.map(([val, lbl]) => (statusVal === val ? '☑ ' : '☐ ') + lbl).join('     '));
+  }
+
+  const children = [];
+  children.push(navyBar("ENGINEERING ORDER FORM  —  Standard 5' O.C. Precast Materials  —  American Precast Concrete / Concrete Fence Installers"));
+  children.push(new Paragraph({ text: '', spacing: { after: 100 } }));
+  children.push(para('Requested By: ' + (e.requestedBy || '') + '     Date: ' + (e.requestDate || '') + '     Job / Bid #: ' + (d.jobNumber || '')));
+
+  children.push(navyBar('1. PROJECT INFORMATION'));
+  children.push(fieldPara('Project / Customer Name', (d.customerName || '') + (d.company ? ' — ' + d.company : '')));
+  children.push(fieldPara('Project Address', d.address));
+  children.push(para('City: ' + (d.city || '') + '     State: ' + (d.state || '') + '     ZIP: ' + (d.zip || '') + '     County / Jurisdiction: ' + (e.countyJurisdiction || '')));
+
+  children.push(navyBar('2. MATERIAL TYPE AND COMPONENTS'));
+  children.push(fieldPara('Material / Product Type', e.materialType));
+  children.push(fieldPara('Texture / Pattern', e.texturePattern));
+  children.push(checkLine(ENGINEERING_COMPONENTS, e.componentsRequired));
+  children.push(fieldPara('Other Components', e.otherComponents));
+
+  children.push(navyBar('3. WALL HEIGHTS AND RETAINING CONDITIONS'));
+  const whRows = [new TableRow({
+    children: [
+      cell('Design', { bold: true, shading: LIGHT, width: 10 }),
+      cell('Wall Height', { bold: true, shading: LIGHT, width: 22 }),
+      cell('Retaining Height', { bold: true, shading: LIGHT, width: 23 }),
+      cell('Approx. LF', { bold: true, shading: LIGHT, width: 15 }),
+      cell('Condition / Location', { bold: true, shading: LIGHT, width: 30 })
+    ]
+  })];
+  e.wallHeights.forEach((row, i) => {
+    whRows.push(new TableRow({
+      children: [
+        cell(String(i + 1)),
+        cell(row.wallHeight || ''),
+        cell(row.retainingHeight || ''),
+        cell(row.approxLF || ''),
+        cell(row.condition || '')
+      ]
+    }));
+  });
+  children.push(new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: whRows }));
+  children.push(para((e.retainingOption === 'none' ? '☑ ' : '☐ ') + 'No retaining     ' + (e.retainingOption === 'required' ? '☑ ' : '☐ ') + 'Retaining required     Maximum retaining height: ' + (e.maxRetainingHeight || '')));
+
+  children.push(navyBar('4. FOOTING DESIGN REQUEST'));
+  children.push(fieldPara('How many footing designs are needed', e.footingDesignsNeeded));
+  children.push(para('Describe which heights or conditions require separate footing designs:'));
+  children.push(para(e.footingDescribe));
+
+  children.push(navyBar('5. SUPPORTING DOCUMENTS'));
+  children.push(statusLine('Soils Report', e.soilsReportStatus, [['attached', 'Attached'], ['not_attached', 'Not Attached'], ['not_available', 'Not Available']]));
+  children.push(statusLine('Civil Plans', e.civilPlansStatus, [['attached', 'Attached'], ['not_attached', 'Not Attached'], ['not_available', 'Not Available']]));
+  children.push(fieldPara('Other Plans / Documents Attached', e.otherPlansDocs));
+
+  children.push(navyBar('6. SPECIAL DESIGN CRITERIA'));
+  children.push(checkLine(ENGINEERING_SPECIAL_CRITERIA.slice(0, 4), e.specialCriteria));
+  children.push(checkLine(ENGINEERING_SPECIAL_CRITERIA.slice(4), e.specialCriteria));
+  children.push(para('Describe special design criteria, agency requirements, loads, restrictions, or unusual site conditions:'));
+  children.push(para(e.specialCriteriaDescribe));
+
+  children.push(navyBar('7. GATES AND ATTACHMENTS'));
+  children.push(para('Will gates or other items attach to the precast wall / posts?   ' + (e.gatesAttach === 'no' ? '☑ ' : '☐ ') + 'No     ' + (e.gatesAttach === 'yes' ? '☑ ' : '☐ ') + 'Yes'));
+  children.push(fieldPara('Gate Type / Quantity / Size', e.gateTypeQtySize));
+  children.push(fieldPara('Attachment Method / Loads / Hardware', e.attachmentMethod));
+  children.push(statusLine('Gate or Attachment Drawings', e.gateDrawingsStatus, [['attached', 'Attached'], ['not_attached', 'Not Attached']]));
+
+  children.push(navyBar('8. ENGINEERING SCOPE NOTES'));
+  children.push(para(e.scopeNotes));
+
+  children.push(new Paragraph({ text: '', spacing: { after: 100 } }));
+  children.push(para('Submitted By: ' + (e.submittedBy || '') + '     Reviewed By: ' + (e.reviewedBy || '') + '     Date: ' + (e.reviewDate || '')));
+
+  const doc = new Document({ sections: [{ children }] });
+  return Packer.toBlob(doc);
+}
+
 // ---------- App namespace ----------
 const App = {
 
@@ -1644,14 +2050,7 @@ const App = {
     try {
       const docxLib = await import('https://unpkg.com/docx@9.7.1/dist/index.mjs');
       const blob = await buildProposalDocx(docxLib, d, template);
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = (d.customerName || 'proposal').replace(/[^\w\- ]+/g, '').trim() + ' - Proposal.docx';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      downloadBlob(blob, (d.customerName || 'proposal').replace(/[^\w\- ]+/g, '').trim() + ' - Proposal.docx');
     } catch (e) {
       console.error('Proposal generation failed:', e);
       alert('Could not generate the Word document — check your connection and try again.');
@@ -1696,6 +2095,12 @@ const App = {
     currentDealId = id;
     currentView = 'detail';
     openRejectBoxFor = null;
+    detailTab = 'overview';
+    render();
+  },
+
+  setDetailTab(tab) {
+    detailTab = tab;
     render();
   },
 
@@ -2019,6 +2424,46 @@ const App = {
     if (!a) return;
     a.description = value;
     await saveDeal(d);
+  },
+
+  async updateHandoffField(dealId, path, value) {
+    const d = deals.find(x => x.id === dealId);
+    if (!d) return;
+    d.handoff = d.handoff || blankHandoff(d);
+    setPath(d.handoff, path, value);
+    await saveDeal(d);
+  },
+
+  async updateEngineeringField(dealId, path, value) {
+    const d = deals.find(x => x.id === dealId);
+    if (!d) return;
+    d.engineering = d.engineering || blankEngineering(d);
+    setPath(d.engineering, path, value);
+    await saveDeal(d);
+  },
+
+  async downloadHandoffDocx(dealId) {
+    const d = deals.find(x => x.id === dealId);
+    if (!d) return;
+    try {
+      const docxLib = await import('https://unpkg.com/docx@9.7.1/dist/index.mjs');
+      const blob = await buildHandoffDocx(docxLib, d);
+      downloadBlob(blob, (d.customerName || 'handoff').replace(/[^\w\- ]+/g, '').trim() + ' - Handoff Sheet.docx');
+    } catch (e) {
+      alert('Could not generate the Word document — check your connection and try again.');
+    }
+  },
+
+  async downloadEngineeringDocx(dealId) {
+    const d = deals.find(x => x.id === dealId);
+    if (!d) return;
+    try {
+      const docxLib = await import('https://unpkg.com/docx@9.7.1/dist/index.mjs');
+      const blob = await buildEngineeringDocx(docxLib, d);
+      downloadBlob(blob, (d.customerName || 'engineering').replace(/[^\w\- ]+/g, '').trim() + ' - Engineering Order.docx');
+    } catch (e) {
+      alert('Could not generate the Word document — check your connection and try again.');
+    }
   },
 
   async postComment(dealId) {
@@ -2443,22 +2888,7 @@ function renderDetail() {
     </div>`;
   }
 
-  return `
-  <div class="back-link" onclick="App.goList()">&larr; Back to all deals</div>
-
-  <div class="panel" style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:14px;">
-    <div>
-      <h2 style="margin-bottom:6px;">${esc(d.customerName)}${d.company ? ' — ' + esc(d.company) : ''}</h2>
-      <div style="color:var(--muted); font-size:13.5px;">${esc(fullAddressLine(d))} &middot; Rep: ${esc(d.repName)} &middot; ${esc(d.date)}</div>
-      ${d.email ? `<div style="color:var(--muted); font-size:13.5px; margin-top:2px;">${esc(d.email)}</div>` : ''}
-    </div>
-    <div style="display:flex; align-items:center; gap:12px;">
-      <div class="stamp ${status}">${status}</div>
-      <button class="btn btn-outline btn-small" onclick="App.goProposal('${d.id}')">Generate Proposal</button>
-      ${status === 'rejected' ? `<button class="btn btn-outline btn-small" onclick="App.editDeal('${d.id}')">Edit</button>` : ''}
-    </div>
-  </div>
-
+  const overviewHtml = `
   <div class="panel">
     <h2>Job Site Specifics</h2>
     <div class="job-site-summary">
@@ -2510,6 +2940,317 @@ function renderDetail() {
       <textarea id="comment-input" placeholder="Message about this deal, posting as ${esc(currentUser ? currentUser.name : '')}..."
         onkeydown="if(event.key==='Enter' && !event.shiftKey){ event.preventDefault(); App.postComment('${d.id}'); }"></textarea>
       <button class="btn btn-primary btn-small" onclick="App.postComment('${d.id}')">Send</button>
+    </div>
+  </div>`;
+
+  const tabBody = detailTab === 'handoff' ? renderHandoffTab(d, status)
+    : detailTab === 'engineering' ? renderEngineeringTab(d)
+    : overviewHtml;
+
+  return `
+  <div class="back-link" onclick="App.goList()">&larr; Back to all deals</div>
+
+  <div class="panel" style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:14px;">
+    <div>
+      <h2 style="margin-bottom:6px;">${esc(d.customerName)}${d.company ? ' — ' + esc(d.company) : ''}</h2>
+      <div style="color:var(--muted); font-size:13.5px;">${esc(fullAddressLine(d))} &middot; Rep: ${esc(d.repName)} &middot; ${esc(d.date)}</div>
+      ${d.email ? `<div style="color:var(--muted); font-size:13.5px; margin-top:2px;">${esc(d.email)}</div>` : ''}
+    </div>
+    <div style="display:flex; align-items:center; gap:12px;">
+      <div class="stamp ${status}">${status}</div>
+      <button class="btn btn-outline btn-small" onclick="App.goProposal('${d.id}')">Generate Proposal</button>
+      ${status === 'rejected' ? `<button class="btn btn-outline btn-small" onclick="App.editDeal('${d.id}')">Edit</button>` : ''}
+    </div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab ${detailTab === 'overview' ? 'active' : ''}" onclick="App.setDetailTab('overview')">Overview</div>
+    <div class="tab ${detailTab === 'handoff' ? 'active' : ''}" onclick="App.setDetailTab('handoff')">Handoff Sheet</div>
+    <div class="tab ${detailTab === 'engineering' ? 'active' : ''}" onclick="App.setDetailTab('engineering')">Engineering Order</div>
+  </div>
+
+  ${tabBody}`;
+}
+
+function renderHandoffTab(d, status) {
+  if (status !== 'approved') {
+    return `<div class="empty-state">
+      <div class="big">Available once this deal is fully approved</div>
+      The Handoff Sheet hands the job from Sales to the Project Coordinator — it unlocks once both Connor and Sandy have approved.
+    </div>`;
+  }
+
+  const h = d.handoff || blankHandoff(d);
+
+  const sectionsHtml = HANDOFF_SECTIONS.map(sec => {
+    const rows = sec.items.map(([key, label]) => {
+      const item = h.items[key] || { checked: false, notes: '' };
+      return `<tr>
+        <td class="col-check"><input type="checkbox" ${item.checked ? 'checked' : ''}
+            onchange="App.updateHandoffField('${d.id}', ['items','${key}','checked'], this.checked)"></td>
+        <td class="col-item">${esc(label)}</td>
+        <td class="col-notes"><input type="text" value="${esc(item.notes)}" placeholder="Notes"
+            onchange="App.updateHandoffField('${d.id}', ['items','${key}','notes'], this.value)"></td>
+      </tr>`;
+    }).join('');
+    return `
+    <div class="doc-form-bar">${esc(sec.title)}</div>
+    <div class="doc-form-section" style="padding:0;">
+      <table class="checklist">
+        <thead><tr><th class="col-check"></th><th class="col-item">Checklist Item</th><th>Notes</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+  }).join('');
+
+  const certRows = HANDOFF_CERTIFICATION_ITEMS.map(([key, label]) => `
+    <div class="check-option-row">
+      <input type="checkbox" id="cert-${key}" ${h.certification[key] ? 'checked' : ''}
+          onchange="App.updateHandoffField('${d.id}', ['certification','${key}'], this.checked)">
+      <label for="cert-${key}">${esc(label)}</label>
+    </div>`).join('');
+
+  return `
+  <div class="doc-download-row">
+    <button class="btn btn-primary" onclick="App.downloadHandoffDocx('${d.id}')">Download as Word (.docx)</button>
+    <span class="attach-hint">Prefilled from the deal — fill in the checklist and briefing below before handing off.</span>
+  </div>
+
+  <div class="panel">
+    <h2>Project Info</h2>
+    <div class="field-grid">
+      <div><label class="field-label">Project</label><input type="text" value="${esc(d.customerName)}${d.company ? ' — ' + esc(d.company) : ''}" disabled></div>
+      <div><label class="field-label">Buildertrend #</label>
+        <input type="text" value="${esc(d.jobNumber || '')}" onchange="App.updateDealField('${d.id}','jobNumber', this.value)"></div>
+      <div><label class="field-label">Salesperson</label><input type="text" value="${esc(d.repName)}" disabled></div>
+      <div><label class="field-label">Project Coordinator</label>
+        <input type="text" value="${esc(h.projectCoordinator)}" placeholder="Who is picking this job up?"
+            onchange="App.updateHandoffField('${d.id}', ['projectCoordinator'], this.value)"></div>
+    </div>
+  </div>
+
+  ${sectionsHtml}
+
+  <div class="doc-form-bar">Sales Project Briefing (Required)</div>
+  <div class="doc-form-section">
+    <label class="field-label">1. What is the biggest risk on this project?</label>
+    <textarea rows="2" onchange="App.updateHandoffField('${d.id}', ['briefing','biggestRisk'], this.value)">${esc(h.briefing.biggestRisk)}</textarea>
+    <label class="field-label" style="margin-top:10px;">2. What is the customer's biggest expectation?</label>
+    <textarea rows="2" onchange="App.updateHandoffField('${d.id}', ['briefing','customerExpectation'], this.value)">${esc(h.briefing.customerExpectation)}</textarea>
+    <label class="field-label" style="margin-top:10px;">3. What could cause a Change Order?</label>
+    <textarea rows="2" onchange="App.updateHandoffField('${d.id}', ['briefing','changeOrderRisk'], this.value)">${esc(h.briefing.changeOrderRisk)}</textarea>
+    <label class="field-label" style="margin-top:10px;">4. Is there anything Operations needs to know that is NOT obvious from the plans or proposal?</label>
+    <textarea rows="2" onchange="App.updateHandoffField('${d.id}', ['briefing','opsNotes'], this.value)">${esc(h.briefing.opsNotes)}</textarea>
+
+    <label class="field-label" style="margin-top:14px;">5. Schedule &amp; Customer Commitments</label>
+    <div class="field-grid">
+      <div><label class="field-label">Start</label>
+        <input type="date" value="${esc(h.briefing.scheduleStart)}" onchange="App.updateHandoffField('${d.id}', ['briefing','scheduleStart'], this.value)"></div>
+      <div><label class="field-label">Finish</label>
+        <input type="date" value="${esc(h.briefing.scheduleFinish)}" onchange="App.updateHandoffField('${d.id}', ['briefing','scheduleFinish'], this.value)"></div>
+      <div><label class="field-label">Promised Dates</label>
+        <input type="text" value="${esc(h.briefing.promisedDates)}" onchange="App.updateHandoffField('${d.id}', ['briefing','promisedDates'], this.value)"></div>
+    </div>
+    <label class="field-label" style="margin-top:10px;">Scheduling Constraints (HOA / City / Access / Deliveries / Other)</label>
+    <input type="text" value="${esc(h.briefing.schedulingConstraints)}" onchange="App.updateHandoffField('${d.id}', ['briefing','schedulingConstraints'], this.value)">
+    <label class="field-label" style="margin-top:10px;">Promises Made to Customer</label>
+    <textarea rows="2" onchange="App.updateHandoffField('${d.id}', ['briefing','promisesToCustomer'], this.value)">${esc(h.briefing.promisesToCustomer)}</textarea>
+  </div>
+
+  <div class="doc-form-bar">Final Certification</div>
+  <div class="doc-form-section">
+    ${certRows}
+  </div>
+
+  <div class="panel">
+    <h2>Sign-Off</h2>
+    <div class="field-grid">
+      <div><label class="field-label">Salesperson</label>
+        <input type="text" value="${esc(h.signatures.salesperson)}" onchange="App.updateHandoffField('${d.id}', ['signatures','salesperson'], this.value)"></div>
+      <div><label class="field-label">Date</label>
+        <input type="date" value="${esc(h.signatures.salespersonDate)}" onchange="App.updateHandoffField('${d.id}', ['signatures','salespersonDate'], this.value)"></div>
+      <div><label class="field-label">Project Coordinator</label>
+        <input type="text" value="${esc(h.signatures.pc)}" onchange="App.updateHandoffField('${d.id}', ['signatures','pc'], this.value)"></div>
+      <div><label class="field-label">Date</label>
+        <input type="date" value="${esc(h.signatures.pcDate)}" onchange="App.updateHandoffField('${d.id}', ['signatures','pcDate'], this.value)"></div>
+      <div><label class="field-label">Operations Approval</label>
+        <input type="text" value="${esc(h.signatures.opsApproval)}" onchange="App.updateHandoffField('${d.id}', ['signatures','opsApproval'], this.value)"></div>
+      <div><label class="field-label">Date</label>
+        <input type="date" value="${esc(h.signatures.opsDate)}" onchange="App.updateHandoffField('${d.id}', ['signatures','opsDate'], this.value)"></div>
+    </div>
+  </div>`;
+}
+
+function renderEngineeringTab(d) {
+  const e = d.engineering || blankEngineering(d);
+
+  const componentsHtml = ENGINEERING_COMPONENTS.map(([key, label]) => `
+    <div class="check-option-row">
+      <input type="checkbox" id="comp-${key}" ${e.componentsRequired[key] ? 'checked' : ''}
+          onchange="App.updateEngineeringField('${d.id}', ['componentsRequired','${key}'], this.checked)">
+      <label for="comp-${key}">${esc(label)}</label>
+    </div>`).join('');
+
+  const wallHeightRows = e.wallHeights.map((row, i) => `
+    <tr>
+      <td>${i + 1}</td>
+      <td><input type="text" value="${esc(row.wallHeight)}" onchange="App.updateEngineeringField('${d.id}', ['wallHeights',${i},'wallHeight'], this.value)"></td>
+      <td><input type="text" value="${esc(row.retainingHeight)}" onchange="App.updateEngineeringField('${d.id}', ['wallHeights',${i},'retainingHeight'], this.value)"></td>
+      <td><input type="text" value="${esc(row.approxLF)}" onchange="App.updateEngineeringField('${d.id}', ['wallHeights',${i},'approxLF'], this.value)"></td>
+      <td><input type="text" value="${esc(row.condition)}" onchange="App.updateEngineeringField('${d.id}', ['wallHeights',${i},'condition'], this.value)"></td>
+    </tr>`).join('');
+
+  const specialCriteriaHtml = ENGINEERING_SPECIAL_CRITERIA.map(([key, label]) => `
+    <div class="check-option-row">
+      <input type="checkbox" id="crit-${key}" ${e.specialCriteria[key] ? 'checked' : ''}
+          onchange="App.updateEngineeringField('${d.id}', ['specialCriteria','${key}'], this.checked)">
+      <label for="crit-${key}">${esc(label)}</label>
+    </div>`).join('');
+
+  function statusRadios(name, current, options, path) {
+    return `<div class="check-option-grid">${options.map(([val, label]) => `
+      <div class="check-option-row">
+        <input type="radio" name="${name}" id="${name}-${val}" ${current === val ? 'checked' : ''}
+            onchange="App.updateEngineeringField('${d.id}', ${JSON.stringify(path)}, '${val}')">
+        <label for="${name}-${val}">${esc(label)}</label>
+      </div>`).join('')}</div>`;
+  }
+
+  return `
+  <div class="doc-download-row">
+    <button class="btn btn-primary" onclick="App.downloadEngineeringDocx('${d.id}')">Download as Word (.docx)</button>
+    <span class="attach-hint">Prefilled from the deal — any sales rep can fill this in and send it to Engineering, no approval needed.</span>
+  </div>
+
+  <div class="panel">
+    <div class="field-grid">
+      <div><label class="field-label">Requested By</label>
+        <input type="text" value="${esc(e.requestedBy)}" onchange="App.updateEngineeringField('${d.id}', ['requestedBy'], this.value)"></div>
+      <div><label class="field-label">Date</label>
+        <input type="date" value="${esc(e.requestDate)}" onchange="App.updateEngineeringField('${d.id}', ['requestDate'], this.value)"></div>
+      <div><label class="field-label">Job / Bid #</label>
+        <input type="text" value="${esc(d.jobNumber || '')}" onchange="App.updateDealField('${d.id}','jobNumber', this.value)"></div>
+    </div>
+  </div>
+
+  <div class="doc-form-bar">1. PROJECT INFORMATION</div>
+  <div class="doc-form-section">
+    <div class="field-grid">
+      <div><label class="field-label">Project / Customer Name</label><input type="text" value="${esc(d.customerName)}${d.company ? ' — ' + esc(d.company) : ''}" disabled></div>
+    </div>
+    <div style="margin-top:10px;"><label class="field-label">Project Address</label><input type="text" value="${esc(d.address)}" disabled></div>
+    <div class="field-grid" style="margin-top:10px;">
+      <div><label class="field-label">City</label><input type="text" value="${esc(d.city)}" disabled></div>
+      <div><label class="field-label">State</label><input type="text" value="${esc(d.state)}" disabled></div>
+      <div><label class="field-label">ZIP</label><input type="text" value="${esc(d.zip)}" disabled></div>
+      <div><label class="field-label">County / Jurisdiction</label>
+        <input type="text" value="${esc(e.countyJurisdiction)}" onchange="App.updateEngineeringField('${d.id}', ['countyJurisdiction'], this.value)"></div>
+    </div>
+  </div>
+
+  <div class="doc-form-bar">2. MATERIAL TYPE AND COMPONENTS</div>
+  <div class="doc-form-section">
+    <div class="field-grid">
+      <div><label class="field-label">Material / Product Type</label>
+        <input type="text" value="${esc(e.materialType)}" onchange="App.updateEngineeringField('${d.id}', ['materialType'], this.value)"></div>
+      <div><label class="field-label">Texture / Pattern</label>
+        <input type="text" value="${esc(e.texturePattern)}" onchange="App.updateEngineeringField('${d.id}', ['texturePattern'], this.value)"></div>
+    </div>
+    <label class="field-label" style="margin-top:10px;">Components Required</label>
+    <div class="check-option-grid">${componentsHtml}</div>
+    <label class="field-label" style="margin-top:10px;">Other Components</label>
+    <input type="text" value="${esc(e.otherComponents)}" onchange="App.updateEngineeringField('${d.id}', ['otherComponents'], this.value)">
+  </div>
+
+  <div class="doc-form-bar">3. WALL HEIGHTS AND RETAINING CONDITIONS</div>
+  <div class="doc-form-section">
+    <p class="attach-hint" style="margin-top:-4px;">List every wall height required. Include retaining height separately where applicable.</p>
+    <table class="grid-table">
+      <thead><tr><th>Design</th><th>Wall Height</th><th>Retaining Height</th><th>Approx. LF</th><th>Condition / Location</th></tr></thead>
+      <tbody>${wallHeightRows}</tbody>
+    </table>
+    <div class="check-option-grid">
+      <div class="check-option-row">
+        <input type="radio" name="retaining" id="retaining-none" ${e.retainingOption === 'none' ? 'checked' : ''}
+            onchange="App.updateEngineeringField('${d.id}', ['retainingOption'], 'none')">
+        <label for="retaining-none">No retaining</label>
+      </div>
+      <div class="check-option-row">
+        <input type="radio" name="retaining" id="retaining-required" ${e.retainingOption === 'required' ? 'checked' : ''}
+            onchange="App.updateEngineeringField('${d.id}', ['retainingOption'], 'required')">
+        <label for="retaining-required">Retaining required</label>
+      </div>
+      <div><label class="field-label">Maximum retaining height</label>
+        <input type="text" value="${esc(e.maxRetainingHeight)}" onchange="App.updateEngineeringField('${d.id}', ['maxRetainingHeight'], this.value)"></div>
+    </div>
+  </div>
+
+  <div class="doc-form-bar">4. FOOTING DESIGN REQUEST</div>
+  <div class="doc-form-section">
+    <div class="field-grid">
+      <div><label class="field-label">How many footing designs are needed?</label>
+        <input type="text" value="${esc(e.footingDesignsNeeded)}" onchange="App.updateEngineeringField('${d.id}', ['footingDesignsNeeded'], this.value)"></div>
+    </div>
+    <label class="field-label" style="margin-top:10px;">Describe which heights or conditions require separate footing designs</label>
+    <textarea rows="2" onchange="App.updateEngineeringField('${d.id}', ['footingDescribe'], this.value)">${esc(e.footingDescribe)}</textarea>
+  </div>
+
+  <div class="doc-form-bar">5. SUPPORTING DOCUMENTS</div>
+  <div class="doc-form-section">
+    <label class="field-label">Soils Report</label>
+    ${statusRadios('soils', e.soilsReportStatus, [['attached','Attached'],['not_attached','Not Attached'],['not_available','Not Available']], ['soilsReportStatus'])}
+    <label class="field-label" style="margin-top:10px;">Civil Plans</label>
+    ${statusRadios('civil', e.civilPlansStatus, [['attached','Attached'],['not_attached','Not Attached'],['not_available','Not Available']], ['civilPlansStatus'])}
+    <label class="field-label" style="margin-top:10px;">Other Plans / Documents Attached</label>
+    <input type="text" value="${esc(e.otherPlansDocs)}" onchange="App.updateEngineeringField('${d.id}', ['otherPlansDocs'], this.value)">
+  </div>
+
+  <div class="doc-form-bar">6. SPECIAL DESIGN CRITERIA</div>
+  <div class="doc-form-section">
+    <p class="attach-hint" style="margin-top:-4px;">Check all that apply and describe below.</p>
+    <div class="check-option-grid">${specialCriteriaHtml}</div>
+    <label class="field-label" style="margin-top:10px;">Describe special design criteria, agency requirements, loads, restrictions, or unusual site conditions</label>
+    <textarea rows="3" onchange="App.updateEngineeringField('${d.id}', ['specialCriteriaDescribe'], this.value)">${esc(e.specialCriteriaDescribe)}</textarea>
+  </div>
+
+  <div class="doc-form-bar">7. GATES AND ATTACHMENTS</div>
+  <div class="doc-form-section">
+    <label class="field-label">Will gates or other items attach to the precast wall / posts?</label>
+    <div class="check-option-grid">
+      <div class="check-option-row">
+        <input type="radio" name="gatesattach" id="gatesattach-no" ${e.gatesAttach === 'no' ? 'checked' : ''}
+            onchange="App.updateEngineeringField('${d.id}', ['gatesAttach'], 'no')">
+        <label for="gatesattach-no">No</label>
+      </div>
+      <div class="check-option-row">
+        <input type="radio" name="gatesattach" id="gatesattach-yes" ${e.gatesAttach === 'yes' ? 'checked' : ''}
+            onchange="App.updateEngineeringField('${d.id}', ['gatesAttach'], 'yes')">
+        <label for="gatesattach-yes">Yes</label>
+      </div>
+    </div>
+    <label class="field-label" style="margin-top:10px;">Gate Type / Quantity / Size</label>
+    <input type="text" value="${esc(e.gateTypeQtySize)}" onchange="App.updateEngineeringField('${d.id}', ['gateTypeQtySize'], this.value)">
+    <label class="field-label" style="margin-top:10px;">Attachment Method / Loads / Hardware</label>
+    <input type="text" value="${esc(e.attachmentMethod)}" onchange="App.updateEngineeringField('${d.id}', ['attachmentMethod'], this.value)">
+    <label class="field-label" style="margin-top:10px;">Gate or Attachment Drawings</label>
+    ${statusRadios('gatedraw', e.gateDrawingsStatus, [['attached','Attached'],['not_attached','Not Attached']], ['gateDrawingsStatus'])}
+  </div>
+
+  <div class="doc-form-bar">8. ENGINEERING SCOPE NOTES</div>
+  <div class="doc-form-section">
+    <textarea rows="3" placeholder="Additional instructions, exclusions, assumptions, requested details, or engineer notes"
+        onchange="App.updateEngineeringField('${d.id}', ['scopeNotes'], this.value)">${esc(e.scopeNotes)}</textarea>
+  </div>
+
+  <div class="panel">
+    <h2>Order Review</h2>
+    <div class="field-grid">
+      <div><label class="field-label">Submitted By</label>
+        <input type="text" value="${esc(e.submittedBy)}" onchange="App.updateEngineeringField('${d.id}', ['submittedBy'], this.value)"></div>
+      <div><label class="field-label">Reviewed By</label>
+        <input type="text" value="${esc(e.reviewedBy)}" onchange="App.updateEngineeringField('${d.id}', ['reviewedBy'], this.value)"></div>
+      <div><label class="field-label">Date</label>
+        <input type="date" value="${esc(e.reviewDate)}" onchange="App.updateEngineeringField('${d.id}', ['reviewDate'], this.value)"></div>
     </div>
   </div>`;
 }
