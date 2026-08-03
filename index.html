@@ -153,6 +153,48 @@
     font-size: 16px;
   }
 
+  .settings-wrap { position: relative; }
+
+  .settings-menu {
+    display: none;
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    min-width: 220px;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-md);
+    padding: 8px;
+    flex-direction: column;
+    gap: 2px;
+    z-index: 10;
+  }
+  .settings-menu.open { display: flex; }
+
+  .settings-menu .current-user-label {
+    padding: 6px 10px 8px;
+    margin: 0 0 4px;
+    border-bottom: 1px solid var(--line);
+    color: var(--ink-soft);
+  }
+
+  .settings-menu-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: none;
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 14px;
+    font-weight: 600;
+    padding: 9px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .settings-menu-item:hover { background: var(--panel-alt); }
+
   main {
     max-width: min(2000px, 97vw);
     margin: 0 auto;
@@ -647,14 +689,19 @@
     <div class="subtitle">Residential sales &mdash; cost breakdown &amp; sign-off</div>
   </div>
   <div class="nav">
-    <span class="current-user-label" id="current-user-label"></span>
-    <button class="btn btn-outline btn-small" id="manage-users-btn" onclick="App.goManageUsers()" style="display:none;">Manage Users</button>
-    <button class="btn btn-outline btn-small" id="manage-templates-btn" onclick="App.goManageTemplates()" style="display:none;">Proposal Templates</button>
-    <button class="btn btn-ghost icon-btn" id="theme-toggle-btn" onclick="toggleTheme()" title="Toggle day/night mode">🌙</button>
     <button class="btn btn-ghost" onclick="App.goList()">All Deals</button>
     <button class="btn btn-primary" onclick="App.goNewDeal()">+ New Deal</button>
-    <button class="btn btn-outline btn-small" onclick="App.goChangePassword()">Change Password</button>
-    <button class="btn btn-outline btn-small" onclick="logout()">Log Out</button>
+    <div class="settings-wrap">
+      <button class="btn btn-ghost icon-btn" id="settings-btn" onclick="toggleSettingsMenu(event)" title="Settings">⚙️</button>
+      <div class="settings-menu" id="settings-menu">
+        <div class="current-user-label" id="current-user-label"></div>
+        <button class="settings-menu-item" id="manage-users-btn" onclick="closeSettingsMenu(); App.goManageUsers();" style="display:none;">Manage Users</button>
+        <button class="settings-menu-item" id="manage-templates-btn" onclick="closeSettingsMenu(); App.goManageTemplates();" style="display:none;">Proposal Templates</button>
+        <button class="settings-menu-item" id="theme-toggle-btn" onclick="toggleTheme()">🌙 Dark Mode</button>
+        <button class="settings-menu-item" onclick="closeSettingsMenu(); App.goChangePassword();">Change Password</button>
+        <button class="settings-menu-item" onclick="closeSettingsMenu(); logout();">Log Out</button>
+      </div>
+    </div>
   </div>
 </header>
 
@@ -1006,8 +1053,23 @@ function logout() {
 function applyTheme(theme) {
   document.body.classList.toggle('dark', theme === 'dark');
   const btn = document.getElementById('theme-toggle-btn');
-  if (btn) btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+  if (btn) btn.textContent = theme === 'dark' ? '☀️ Light Mode' : '🌙 Dark Mode';
 }
+
+function toggleSettingsMenu(event) {
+  if (event) event.stopPropagation();
+  document.getElementById('settings-menu').classList.toggle('open');
+}
+
+function closeSettingsMenu() {
+  const menu = document.getElementById('settings-menu');
+  if (menu) menu.classList.remove('open');
+}
+
+document.addEventListener('click', (e) => {
+  const wrap = document.querySelector('.settings-wrap');
+  if (wrap && !wrap.contains(e.target)) closeSettingsMenu();
+});
 
 function toggleTheme() {
   const next = document.body.classList.contains('dark') ? 'light' : 'dark';
