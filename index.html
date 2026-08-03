@@ -317,6 +317,7 @@
     box-shadow: var(--inset-shadow);
   }
   textarea { resize: vertical; min-height: 60px; }
+  textarea.notes-autogrow { resize: none; overflow: hidden; }
   input:focus, select:focus, textarea:focus {
     outline: 2px solid var(--amber);
     outline-offset: 1px;
@@ -2753,6 +2754,16 @@ const App = {
 };
 
 // ---------- Render functions ----------
+// Grows a textarea to fit its full content height, no internal scrollbar —
+// used for Site Notes so reading everything doesn't require scrolling
+// inside a tiny box. Re-run after every keystroke and after every render()
+// (a fresh innerHTML paint has no prior height to build on).
+function autoGrowTextarea(el) {
+  if (!el) return;
+  el.style.height = 'auto';
+  el.style.height = el.scrollHeight + 'px';
+}
+
 function render() {
   const main = document.getElementById('main');
   if (currentView === 'list') main.innerHTML = renderList();
@@ -2762,6 +2773,7 @@ function render() {
   else if (currentView === 'change-password') main.innerHTML = renderChangePassword();
   else if (currentView === 'templates') main.innerHTML = renderTemplates();
   else if (currentView === 'proposal') main.innerHTML = renderProposal();
+  main.querySelectorAll('textarea.notes-autogrow').forEach(autoGrowTextarea);
 }
 
 function renderList() {
@@ -2946,8 +2958,8 @@ function renderForm() {
         <label class="field-label" style="margin-bottom:0;">Site Notes</label>
         <button class="btn btn-outline btn-small" id="organize-draft-notes-btn" onclick="App.organizeDraftNotesWithAI()">✨ Organize with AI</button>
       </div>
-      <textarea placeholder="Anything Connor and Sandy should know before approving — access, terrain, timeline pressure, HOA, etc."
-        oninput="App.updateJobSiteField('notes', this.value)">${esc(d.jobSite.notes)}</textarea>
+      <textarea class="notes-autogrow" placeholder="Anything Connor and Sandy should know before approving — access, terrain, timeline pressure, HOA, etc."
+        oninput="App.updateJobSiteField('notes', this.value); autoGrowTextarea(this)">${esc(d.jobSite.notes)}</textarea>
     </div>
   </div>
 
@@ -3082,8 +3094,8 @@ function renderDetail() {
         <label class="field-label" style="margin-bottom:0;">Site Notes</label>
         <button class="btn btn-outline btn-small" id="organize-notes-btn-${d.id}" onclick="App.organizeNotesWithAI('${d.id}')">✨ Organize with AI</button>
       </div>
-      <textarea placeholder="Anything Connor and Sandy should know before approving — access, terrain, timeline pressure, HOA, etc."
-        onchange="App.updateDealNotes('${d.id}', this.value)">${esc(d.jobSite.notes)}</textarea>
+      <textarea class="notes-autogrow" placeholder="Anything Connor and Sandy should know before approving — access, terrain, timeline pressure, HOA, etc."
+        oninput="autoGrowTextarea(this)" onchange="App.updateDealNotes('${d.id}', this.value)">${esc(d.jobSite.notes)}</textarea>
     </div>
   </div>
 
