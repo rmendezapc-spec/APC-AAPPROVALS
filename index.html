@@ -1206,6 +1206,53 @@ function blankItem() {
   return { id: uid('item'), desc: '', qty: 1, unit: 'each', unitCost: 0, costType: 'Material', markupPercent: 25 };
 }
 
+// Turns the raw rows from an uploaded cost-estimate export (BuilderTrend-style
+// "Category / Title / Description / Quantity / Unit / Unit Cost / Cost Type /
+// Markup" columns) into deal sections/items. Looks columns up by header name
+// (case-insensitive) rather than fixed position, since exports can reorder
+// columns across versions.
+function parseEstimateRows(rows) {
+  if (!rows || rows.length < 2) return [];
+  const norm = h => String(h || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const headerRow = rows[0].map(norm);
+  const idx = name => headerRow.indexOf(norm(name));
+  const cCategory = idx('Category');
+  const cTitle = idx('Title');
+  const cDescription = idx('Description');
+  const cQty = idx('Quantity');
+  const cUnit = idx('Unit');
+  const cUnitCost = idx('Unit Cost');
+  const cCostType = idx('Cost Type');
+  const cMarkup = idx('Markup');
+
+  const sectionsByName = new Map();
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+    if (!row || row.every(v => v === '' || v == null)) continue;
+
+    const title = cTitle >= 0 ? String(row[cTitle] || '').trim() : '';
+    const description = cDescription >= 0 ? String(row[cDescription] || '').trim() : '';
+    const desc = title && description ? `${title} - ${description}` : (description || title);
+    if (!desc) continue;
+
+    const sectionName = (cCategory >= 0 ? String(row[cCategory] || '').trim() : '') || 'Imported Costs';
+    const qty = cQty >= 0 ? (Number(row[cQty]) || 1) : 1;
+    const unit = (cUnit >= 0 ? String(row[cUnit] || '').trim() : '') || 'each';
+    const unitCost = cUnitCost >= 0 ? (Number(row[cUnitCost]) || 0) : 0;
+    const rawCostType = cCostType >= 0 ? String(row[cCostType] || '').trim() : '';
+    const costType = COST_TYPES.find(t => t.toLowerCase() === rawCostType.toLowerCase()) || 'None';
+    const markupPercent = cMarkup >= 0 ? (Number(row[cMarkup]) || 0) : 0;
+
+    if (!sectionsByName.has(sectionName)) {
+      sectionsByName.set(sectionName, { id: uid('sec'), name: sectionName, items: [] });
+    }
+    sectionsByName.get(sectionName).items.push({
+      id: uid('item'), desc, qty, unit, unitCost, costType, markupPercent
+    });
+  }
+  return Array.from(sectionsByName.values());
+}
+
 // Per-line-item cost math, mirroring the Builder Cost -> Markup -> Client Price -> Margin/Profit
 // flow from the BuilderTrend reference.
 function itemCalc(item) {
@@ -1713,6 +1760,33 @@ const App = {
     if (pfEl) pfEl.textContent = money(dt.profit);
   },
 
+  async importEstimateFile(fileList) {
+    const file = fileList && fileList[0];
+    if (!file) return;
+    const hasExistingItems = draftDeal.sections.some(s => s.items.length > 0);
+    if (hasExistingItems && !confirm('Importing will replace the cost breakdown sections below with the line items from this file. Continue?')) {
+      return;
+    }
+    try {
+      const XLSX = await import('https://unpkg.com/xlsx@0.18.5/xlsx.mjs');
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: 'array' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+      const sections = parseEstimateRows(rows);
+      if (!sections.length) {
+        alert("Could not find any cost line items in that file — double check it's an estimate/cost report export.");
+        return;
+      }
+      draftDeal.sections = sections;
+      render();
+      const itemCount = sections.reduce((n, s) => n + s.items.length, 0);
+      alert(`Imported ${itemCount} line item(s) across ${sections.length} section(s). Customer name, contact info, and address still need to be filled in manually — this file only contains cost data.`);
+    } catch (e) {
+      alert("Could not read that file — make sure it's a .xls or .xlsx estimate export.");
+    }
+  },
+
   async handleFiles(fileList) {
     const files = Array.from(fileList || []);
     for (const file of files) {
@@ -2105,6 +2179,18 @@ function renderForm() {
 
   return `
   <div class="back-link" onclick="App.cancelForm()">&larr; Back to all deals</div>
+
+  <div class="panel">
+    <div class="attach-btn-row">
+      <label class="btn btn-outline btn-small" style="cursor:pointer;">
+        + Import from Estimate File
+        <input type="file" accept=".xls,.xlsx,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            style="display:none;" onchange="App.importEstimateFile(this.files); this.value='';">
+      </label>
+      <span class="attach-hint">Upload a cost estimate export (.xls/.xlsx) to auto-fill the cost breakdown below. Customer info still needs to be entered manually.</span>
+    </div>
+  </div>
+
   <div class="panel">
     <h2>Deal Details</h2>
     <div class="field-grid">
