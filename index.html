@@ -649,6 +649,7 @@
   <div class="nav">
     <span class="current-user-label" id="current-user-label"></span>
     <button class="btn btn-outline btn-small" id="manage-users-btn" onclick="App.goManageUsers()" style="display:none;">Manage Users</button>
+    <button class="btn btn-outline btn-small" id="manage-templates-btn" onclick="App.goManageTemplates()" style="display:none;">Proposal Templates</button>
     <button class="btn btn-ghost icon-btn" id="theme-toggle-btn" onclick="toggleTheme()" title="Toggle day/night mode">🌙</button>
     <button class="btn btn-ghost" onclick="App.goList()">All Deals</button>
     <button class="btn btn-primary" onclick="App.goNewDeal()">+ New Deal</button>
@@ -708,6 +709,7 @@
   const legacyDocRef = doc(db, 'apcDealBoard', 'deals');
   const dealsCollRef = collection(db, 'deals');
   const usersCollRef = collection(db, 'users');
+  const templatesCollRef = collection(db, 'templates');
 
   // Each deal is its own document, keyed by the deal's own id. This avoids the
   // 1MB single-document cap and the "last write wins, whole list" concurrency
@@ -815,6 +817,99 @@
       console.error('User seed failed:', e);
     }
   };
+
+  // Proposal templates — the reusable boilerplate (scope of work, terms,
+  // exclusions, legal, next steps) combined with a deal's own line items to
+  // generate a client-facing Word proposal.
+  window.__firebaseSaveTemplate = async function (template) {
+    try {
+      await setDoc(doc(templatesCollRef, template.id), template);
+      return { ok: true };
+    } catch (e) {
+      console.error('Firestore save template failed:', e);
+      return { ok: false, error: (e && e.message) || String(e) };
+    }
+  };
+
+  window.__firebaseDeleteTemplate = async function (templateId) {
+    try {
+      await deleteDoc(doc(templatesCollRef, templateId));
+      return { ok: true };
+    } catch (e) {
+      console.error('Firestore delete template failed:', e);
+      return { ok: false, error: (e && e.message) || String(e) };
+    }
+  };
+
+  window.__firebaseSubscribeTemplates = function (onData, onError) {
+    onSnapshot(templatesCollRef, (snap) => {
+      const arr = [];
+      snap.forEach((d) => arr.push(d.data()));
+      onData(arr);
+    }, (err) => {
+      console.error('Firestore listen error (templates):', err);
+      if (onError) onError(err);
+    });
+  };
+
+  // Seed one starter template so there's always something to pick, without
+  // overwriting anything a team member already created/edited.
+  window.__firebaseSeedTemplates = async function () {
+    try {
+      const existing = await getDocs(templatesCollRef);
+      if (!existing.empty) return;
+      const starter = {
+        id: 'tpl_standard',
+        name: 'Standard Proposal',
+        scopeIntro: 'Thank you for the opportunity to bid on your project. We specialize in delivering quality workmanship, durability, security, and visual appeal. Below is a detailed breakdown of our proposed scope, terms, and protections for your review.',
+        scopeSteps: [
+          'Material Procurement — acquire all necessary materials, including panels, posts, caps, and hardware. Inspect upon delivery to ensure quality and conformance.',
+          'Site Preparation — excavate footings per engineering specs, ensuring consistent spacing and alignment.',
+          'Installation — mount panels/posts using specified hardware, ensuring level alignment and structural integrity.',
+          'Finishing Touches — apply any sealants or fillers for uniform appearance and additional protection.',
+          'Site Cleanup — remove all construction debris and restore the worksite to its original condition as closely as possible.',
+          'Final Inspection — conduct a complete walkthrough to confirm installation meets all specifications and quality standards.'
+        ].join('\n'),
+        conditions: [
+          'Compliance — registered per the latest applicable building codes. Sole responsibility of the customer.',
+          'Site Preparation — customer provides clear, level access, and pre-marks any property lines.',
+          'Change Orders — no changes accepted post-signout without written change order.',
+          'Installation Details — tolerance from finish grade applies. Not responsible for vegetation, irrigation, or sprinkler lines.',
+          'Labor Considerations — bid based on non-union labor unless PLA is not required.',
+          'Delays & Additional Costs — additional charges may apply for site conditions, plus any suspended change order down days.',
+          'Material Finish — inconsistencies in integral color may occur.',
+          'Estimate Validity — 30-day validity, 10% cancellation fee.'
+        ].join('\n'),
+        exclusions: [
+          'Permits, insurance, and bonds',
+          'Engineering drawings and calcs',
+          'Electrical, gate automation, bollards',
+          'Soil export/import, dewatering, obstructions',
+          'Traffic control, signage',
+          'Temporary fencing, mow strips, curbs',
+          'Rebar, embeds, or post sleeves',
+          'Dust control'
+        ].join('\n'),
+        legalProtections: [
+          'Indemnity — client holds contractor harmless from job-site claims related to work performed.',
+          'Force Majeure — contractor not liable for delays caused by acts of God, strikes, or government interference.',
+          'Dispute Resolution — all disputes settled via binding arbitration through the American Arbitration Association.',
+          'Limitation of Liability — contractor not responsible for indirect, special, or punitive damages.'
+        ].join('\n'),
+        nextSteps: [
+          'Engineering Finalization — our team will schedule a walkthrough (if needed) to review layout, staging, and access.',
+          'Contract & Schedule Lock-In — once everything is confirmed, we\'ll finalize the agreement and lock in your installation schedule.',
+          'Permits & Fabrication Prep — after permits are issued, we\'ll begin fabricating and prepping materials for your project.',
+          'Kickoff & Mobilization — we\'ll roll out our crew, equipment, and materials to the site on the agreed start date.',
+          'Admin & Support — need help with paperwork, warranties, or documentation? Our admin crew is here to help.'
+        ].join('\n'),
+        createdAt: Date.now()
+      };
+      await setDoc(doc(templatesCollRef, starter.id), starter);
+    } catch (e) {
+      console.error('Template seed failed:', e);
+    }
+  };
 </script>
 
 <script>
@@ -839,6 +934,8 @@ function updateUserChrome() {
   if (label) label.textContent = currentUser ? ('Logged in as ' + currentUser.name) : '';
   const manageBtn = document.getElementById('manage-users-btn');
   if (manageBtn) manageBtn.style.display = isAdminUser(currentUser) ? '' : 'none';
+  const templatesBtn = document.getElementById('manage-templates-btn');
+  if (templatesBtn) templatesBtn.style.display = isAdminUser(currentUser) ? '' : 'none';
 }
 
 let gateLoadError = '';
@@ -983,6 +1080,8 @@ const ACCESS_OPTIONS = ['Easy — full access','Moderate — some restrictions',
 const DEFAULT_SECTIONS = ['General Requirements','Labor & Installation','Materials & Products','Mobilization'];
 
 let deals = [];
+let allTemplates = [];
+let selectedTemplateId = null;
 let currentView = 'list';
 let currentFilter = 'all';
 let draftDeal = null;
@@ -1007,6 +1106,11 @@ function money(n) {
 function todayStr() {
   const d = new Date();
   return d.toISOString().slice(0,10);
+}
+
+function fullAddressLine(d) {
+  const cityStateZip = [d.city, [d.state, d.zip].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+  return [d.address, cityStateZip].filter(Boolean).join(', ');
 }
 
 let firebaseSubscribed = false;
@@ -1064,11 +1168,28 @@ function subscribeToDealsOnce() {
   });
 }
 
+function subscribeToTemplatesOnce() {
+  return new Promise((resolve) => {
+    if (!window.__firebaseSubscribeTemplates) { resolve(); return; }
+    let settled = false;
+    window.__firebaseSubscribeTemplates((templates) => {
+      allTemplates = templates;
+      if (currentView === 'proposal' || currentView === 'templates') render();
+      if (!settled) { settled = true; resolve(); }
+    }, () => { if (!settled) { settled = true; resolve(); } });
+  });
+}
+
 function blankDeal() {
   return {
     id: uid('deal'),
     customerName: '',
+    company: '',
+    email: '',
     address: '',
+    city: '',
+    state: '',
+    zip: '',
     repName: '',
     date: todayStr(),
     jobSite: { propertyType: '', accessDifficulty: '', notes: '' },
@@ -1236,6 +1357,116 @@ function renderAttachmentCard(a, opts) {
   </div>`;
 }
 
+// Builds a real, fully-editable .docx from a deal + template using the docx
+// library (loaded on demand, only when a proposal is actually downloaded —
+// no reason to ship this to everyone who's just approving deals).
+async function buildProposalDocx(docxLib, d, template) {
+  const { Document, Paragraph, TextRun, HeadingLevel, AlignmentType, Table, TableRow, TableCell, WidthType, Packer } = docxLib;
+
+  function cell(text, opts) {
+    opts = opts || {};
+    const params = {
+      children: [new Paragraph({ children: [new TextRun({ text: text, bold: !!opts.bold })], alignment: opts.align || AlignmentType.LEFT })]
+    };
+    if (opts.width) params.width = { size: opts.width, type: WidthType.PERCENTAGE };
+    if (opts.columnSpan) params.columnSpan = opts.columnSpan;
+    return new TableCell(params);
+  }
+
+  const lineItemRows = [];
+  lineItemRows.push(new TableRow({
+    children: [
+      cell('Description', { bold: true, width: 55 }),
+      cell('Qty', { bold: true, width: 10, align: AlignmentType.CENTER }),
+      cell('Unit', { bold: true, width: 15, align: AlignmentType.CENTER }),
+      cell('Price', { bold: true, width: 20, align: AlignmentType.RIGHT })
+    ]
+  }));
+
+  d.sections.forEach((sec) => {
+    if (!sec.items.length) return;
+    lineItemRows.push(new TableRow({
+      children: [cell(sec.name, { bold: true, columnSpan: 4 })]
+    }));
+    sec.items.forEach((item) => {
+      const c = itemCalc(item);
+      lineItemRows.push(new TableRow({
+        children: [
+          cell(item.desc || '—'),
+          cell(String(item.qty), { align: AlignmentType.CENTER }),
+          cell(item.unit || '', { align: AlignmentType.CENTER }),
+          cell(money(c.clientPrice), { align: AlignmentType.RIGHT })
+        ]
+      }));
+    });
+  });
+
+  const itemsTable = new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: lineItemRows });
+
+  function heading(text) {
+    return new Paragraph({ text, heading: HeadingLevel.HEADING_2, spacing: { before: 300, after: 150 } });
+  }
+  function para(text) {
+    return new Paragraph({ children: [new TextRun(text)], spacing: { after: 120 } });
+  }
+  function splitLines(text) {
+    return (text || '').split('\n').map((s) => s.trim()).filter(Boolean);
+  }
+  function numbered(text) {
+    return splitLines(text).map((line, i) => para((i + 1) + '. ' + line));
+  }
+  function bulleted(text) {
+    return splitLines(text).map((line) => para('• ' + line));
+  }
+
+  const children = [];
+  children.push(new Paragraph({ text: 'Fence Installers', heading: HeadingLevel.TITLE, alignment: AlignmentType.CENTER }));
+  children.push(new Paragraph({ text: 'Proposal', heading: HeadingLevel.HEADING_1, alignment: AlignmentType.CENTER, spacing: { after: 300 } }));
+
+  children.push(para('Date: ' + (d.date || '')));
+  children.push(new Paragraph({ children: [new TextRun({ text: 'Prepared For', bold: true })], spacing: { before: 200, after: 100 } }));
+  if (d.customerName) children.push(para(d.customerName));
+  if (d.company) children.push(para(d.company));
+  if (d.email) children.push(para(d.email));
+  const addressLine = fullAddressLine(d);
+  if (addressLine) children.push(para(addressLine));
+
+  if (template.scopeIntro) {
+    children.push(heading('Scope of Work'));
+    children.push(para(template.scopeIntro));
+  }
+  if (template.scopeSteps) children.push(...numbered(template.scopeSteps));
+
+  children.push(heading('Line Items & Pricing'));
+  children.push(itemsTable);
+  children.push(new Paragraph({ children: [new TextRun({ text: 'Total Price: ' + money(dealClientPrice(d)), bold: true })], spacing: { before: 200, after: 120 } }));
+
+  if (template.conditions) {
+    children.push(heading('Project Conditions & Requirements'));
+    children.push(...numbered(template.conditions));
+  }
+  if (template.exclusions) {
+    children.push(heading('Conditions & Exclusions'));
+    children.push(...bulleted(template.exclusions));
+  }
+  if (template.legalProtections) {
+    children.push(heading('Legal Protections'));
+    children.push(...numbered(template.legalProtections));
+  }
+  if (template.nextSteps) {
+    children.push(heading('Next Steps'));
+    children.push(...numbered(template.nextSteps));
+  }
+
+  children.push(heading('Acceptance'));
+  children.push(para('By signing below, I approve this proposal and authorize work to proceed.'));
+  children.push(para('Signature: _______________________________          Date: ______________'));
+  children.push(para('Printed Name: ___________________________'));
+
+  const doc = new Document({ sections: [{ children }] });
+  return Packer.toBlob(doc);
+}
+
 // ---------- App namespace ----------
 const App = {
 
@@ -1257,10 +1488,58 @@ const App = {
     render();
   },
 
+  goManageTemplates() {
+    if (!isAdminUser(currentUser)) return;
+    currentView = 'templates';
+    render();
+  },
+
   goChangePassword() {
     if (!currentUser) return;
     currentView = 'change-password';
     render();
+  },
+
+  goProposal(dealId) {
+    currentDealId = dealId;
+    currentView = 'proposal';
+    if (!selectedTemplateId || !allTemplates.some(t => t.id === selectedTemplateId)) {
+      selectedTemplateId = allTemplates.length ? allTemplates[0].id : null;
+    }
+    render();
+  },
+
+  setProposalTemplate(templateId) {
+    selectedTemplateId = templateId;
+  },
+
+  async downloadProposalDocx(dealId) {
+    const d = deals.find(x => x.id === dealId);
+    const template = allTemplates.find(t => t.id === selectedTemplateId);
+    if (!d || !template) {
+      alert('Pick a template first.');
+      return;
+    }
+    const btn = document.getElementById('download-proposal-btn');
+    const originalLabel = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
+    try {
+      const docxLib = await import('https://unpkg.com/docx@9.7.1/dist/index.mjs');
+      const blob = await buildProposalDocx(docxLib, d, template);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = (d.customerName || 'proposal').replace(/[^\w\- ]+/g, '').trim() + ' - Proposal.docx';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    } catch (e) {
+      console.error('Proposal generation failed:', e);
+      alert('Could not generate the Word document — check your connection and try again.');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = originalLabel || 'Download as Word (.docx)'; }
+    }
   },
 
   async submitPasswordChange() {
@@ -1533,6 +1812,15 @@ const App = {
     await saveDeal(d);
   },
 
+  // Generic single-field update, used by the proposal screen to fill in
+  // customer-info gaps directly on the deal record (not a separate draft).
+  async updateDealField(dealId, field, value) {
+    const d = deals.find(x => x.id === dealId);
+    if (!d) return;
+    d[field] = value;
+    await saveDeal(d);
+  },
+
   async addAttachmentsToDeal(dealId, fileList) {
     const d = deals.find(x => x.id === dealId);
     if (!d) return;
@@ -1652,6 +1940,47 @@ const App = {
     if (!confirm(warning)) return;
     if (window.__firebaseDeleteUser) await window.__firebaseDeleteUser(userId);
     render();
+  },
+
+  updateTemplateField(templateId, field, value) {
+    if (!isAdminUser(currentUser)) return;
+    const t = allTemplates.find(x => x.id === templateId);
+    if (t) t[field] = value;
+  },
+
+  async saveTemplateField(templateId) {
+    if (!isAdminUser(currentUser)) return;
+    const t = allTemplates.find(x => x.id === templateId);
+    if (!t || !window.__firebaseSaveTemplate) return;
+    await window.__firebaseSaveTemplate(t);
+    render();
+  },
+
+  async addTemplate() {
+    if (!isAdminUser(currentUser)) return;
+    const nameInput = document.getElementById('new-template-name');
+    const name = (nameInput.value || '').trim();
+    if (!name) {
+      alert('Enter a name for the new template.');
+      return;
+    }
+    const template = {
+      id: uid('tpl'), name,
+      scopeIntro: '', scopeSteps: '', conditions: '', exclusions: '', legalProtections: '', nextSteps: '',
+      createdAt: Date.now()
+    };
+    if (window.__firebaseSaveTemplate) await window.__firebaseSaveTemplate(template);
+    nameInput.value = '';
+    render();
+  },
+
+  async removeTemplate(templateId) {
+    if (!isAdminUser(currentUser)) return;
+    const t = allTemplates.find(x => x.id === templateId);
+    if (!t) return;
+    if (!confirm('Remove template "' + t.name + '"? This cannot be undone.')) return;
+    if (window.__firebaseDeleteTemplate) await window.__firebaseDeleteTemplate(templateId);
+    render();
   }
 };
 
@@ -1663,6 +1992,8 @@ function render() {
   else if (currentView === 'detail') main.innerHTML = renderDetail();
   else if (currentView === 'users') main.innerHTML = renderUsers();
   else if (currentView === 'change-password') main.innerHTML = renderChangePassword();
+  else if (currentView === 'templates') main.innerHTML = renderTemplates();
+  else if (currentView === 'proposal') main.innerHTML = renderProposal();
 }
 
 function renderList() {
@@ -1692,7 +2023,7 @@ function renderList() {
       return `<div class="deal-card" onclick="App.viewDeal('${d.id}')">
         <div class="info">
           <div class="job">${esc(d.customerName || 'Untitled deal')}</div>
-          <div class="meta">${esc(d.address || 'No address')} &middot; Rep: ${esc(d.repName || '—')} &middot; ${esc(d.date || '')}</div>
+          <div class="meta">${esc(fullAddressLine(d) || 'No address')} &middot; Rep: ${esc(d.repName || '—')} &middot; ${esc(d.date || '')}</div>
         </div>
         <div class="right">
           <div class="price">${money(dealClientPrice(d))}<span class="label">Client Price</span></div>
@@ -1777,14 +2108,26 @@ function renderForm() {
   <div class="panel">
     <h2>Deal Details</h2>
     <div class="field-grid">
-      <div><label class="field-label">Customer / Job Name</label>
+      <div><label class="field-label">Customer Name</label>
         <input type="text" value="${esc(d.customerName)}" oninput="App.updateHeaderField('customerName', this.value)"></div>
-      <div><label class="field-label">Job Address</label>
-        <input type="text" value="${esc(d.address)}" oninput="App.updateHeaderField('address', this.value)"></div>
+      <div><label class="field-label">Company</label>
+        <input type="text" value="${esc(d.company)}" oninput="App.updateHeaderField('company', this.value)"></div>
+      <div><label class="field-label">Email Address</label>
+        <input type="text" value="${esc(d.email)}" oninput="App.updateHeaderField('email', this.value)"></div>
       <div><label class="field-label">Sales Rep</label>
         <input type="text" value="${esc(d.repName)}" oninput="App.updateHeaderField('repName', this.value)"></div>
       <div><label class="field-label">Date</label>
         <input type="date" value="${esc(d.date)}" oninput="App.updateHeaderField('date', this.value)"></div>
+    </div>
+    <div class="field-grid" style="margin-top:14px;">
+      <div><label class="field-label">Address</label>
+        <input type="text" value="${esc(d.address)}" oninput="App.updateHeaderField('address', this.value)"></div>
+      <div><label class="field-label">City</label>
+        <input type="text" value="${esc(d.city)}" oninput="App.updateHeaderField('city', this.value)"></div>
+      <div><label class="field-label">State</label>
+        <input type="text" value="${esc(d.state)}" oninput="App.updateHeaderField('state', this.value)"></div>
+      <div><label class="field-label">Zip</label>
+        <input type="text" value="${esc(d.zip)}" oninput="App.updateHeaderField('zip', this.value)"></div>
     </div>
   </div>
 
@@ -1928,11 +2271,13 @@ function renderDetail() {
 
   <div class="panel" style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:14px;">
     <div>
-      <h2 style="margin-bottom:6px;">${esc(d.customerName)}</h2>
-      <div style="color:var(--muted); font-size:13.5px;">${esc(d.address)} &middot; Rep: ${esc(d.repName)} &middot; ${esc(d.date)}</div>
+      <h2 style="margin-bottom:6px;">${esc(d.customerName)}${d.company ? ' — ' + esc(d.company) : ''}</h2>
+      <div style="color:var(--muted); font-size:13.5px;">${esc(fullAddressLine(d))} &middot; Rep: ${esc(d.repName)} &middot; ${esc(d.date)}</div>
+      ${d.email ? `<div style="color:var(--muted); font-size:13.5px; margin-top:2px;">${esc(d.email)}</div>` : ''}
     </div>
     <div style="display:flex; align-items:center; gap:12px;">
       <div class="stamp ${status}">${status}</div>
+      <button class="btn btn-outline btn-small" onclick="App.goProposal('${d.id}')">Generate Proposal</button>
       ${status === 'rejected' ? `<button class="btn btn-outline btn-small" onclick="App.editDeal('${d.id}')">Edit</button>` : ''}
     </div>
   </div>
@@ -2058,6 +2403,130 @@ function renderChangePassword() {
   </div>`;
 }
 
+function templateEditorField(templateId, field, label, value, rows) {
+  return `<label class="field-label" style="margin-top:10px; display:block;">${label}</label>
+    <textarea rows="${rows}" onchange="App.updateTemplateField('${templateId}','${field}', this.value); App.saveTemplateField('${templateId}')">${esc(value)}</textarea>`;
+}
+
+function renderTemplates() {
+  if (!isAdminUser(currentUser)) {
+    return `<div class="empty-state">You don't have access to this page.<div class="back-link" onclick="App.goList()">&larr; Back</div></div>`;
+  }
+
+  const templatesHtml = allTemplates.map(t => `
+    <div class="panel">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px; flex-wrap:wrap;">
+        <input type="text" value="${esc(t.name)}" style="font-weight:700; font-size:15px; max-width:320px;"
+          onchange="App.updateTemplateField('${t.id}','name', this.value); App.saveTemplateField('${t.id}')">
+        <button class="btn btn-danger btn-small" onclick="App.removeTemplate('${t.id}')">Delete Template</button>
+      </div>
+      ${templateEditorField(t.id, 'scopeIntro', 'Scope of Work — Intro Paragraph', t.scopeIntro, 3)}
+      ${templateEditorField(t.id, 'scopeSteps', 'Scope of Work — Steps (one per line)', t.scopeSteps, 4)}
+      ${templateEditorField(t.id, 'conditions', 'Project Conditions &amp; Requirements (one per line)', t.conditions, 4)}
+      ${templateEditorField(t.id, 'exclusions', 'Conditions &amp; Exclusions (one per line)', t.exclusions, 4)}
+      ${templateEditorField(t.id, 'legalProtections', 'Legal Protections (one per line)', t.legalProtections, 3)}
+      ${templateEditorField(t.id, 'nextSteps', 'Next Steps (one per line)', t.nextSteps, 4)}
+    </div>`).join('');
+
+  return `
+  <div class="back-link" onclick="App.goList()">&larr; Back to all deals</div>
+  <div class="panel">
+    <h2>Proposal Templates</h2>
+    <p class="attach-hint">Reusable boilerplate — combined with a deal's own customer info and line items when generating a client-facing Word proposal. Each field auto-saves when you click away.</p>
+  </div>
+  ${templatesHtml}
+  <div class="panel">
+    <h2>Add Template</h2>
+    <div class="field-grid" style="grid-template-columns:1fr;">
+      <div><label class="field-label">Template Name</label>
+        <input type="text" id="new-template-name" placeholder="e.g. Standard Fence Proposal"></div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-primary" onclick="App.addTemplate()">Add Template</button>
+    </div>
+  </div>`;
+}
+
+function renderProposal() {
+  const d = deals.find(x => x.id === currentDealId);
+  if (!d) return `<div class="empty-state">Deal not found.<div class="back-link" onclick="App.goList()">&larr; Back</div></div>`;
+
+  const lineItemsHtml = d.sections.map(sec => {
+    const rows = sec.items.map(item => {
+      const c = itemCalc(item);
+      return `<tr>
+        <td class="col-desc">${esc(item.desc || '—')}</td>
+        <td class="num">${item.qty}</td>
+        <td>${esc(item.unit)}</td>
+        <td class="num">${money(c.clientPrice)}</td>
+      </tr>`;
+    }).join('');
+    const t = sectionTotals(sec);
+    return `<div class="section-block">
+      <div class="section-head"><strong>${esc(sec.name)}</strong></div>
+      <div class="table-scroll">
+      <table class="items">
+        <thead><tr><th class="col-desc">Description</th><th>Qty</th><th>Unit</th><th>Price</th></tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot><tr class="subtotal"><td class="label-cell" colspan="3">Section Subtotal</td><td>${money(t.clientPrice)}</td></tr></tfoot>
+      </table>
+      </div>
+    </div>`;
+  }).join('');
+
+  const templateOptions = allTemplates.map(t => `<option value="${t.id}" ${t.id === selectedTemplateId ? 'selected' : ''}>${esc(t.name)}</option>`).join('');
+
+  return `
+  <div class="back-link" onclick="App.viewDeal('${d.id}')">&larr; Back to deal</div>
+
+  <div class="panel">
+    <h2>Generate Proposal</h2>
+    ${allTemplates.length === 0
+      ? `<div class="banner">No proposal templates yet — <a href="#" onclick="App.goManageTemplates(); return false;">create one first</a>.</div>`
+      : `<div class="field-grid" style="grid-template-columns:1fr;">
+          <div><label class="field-label">Template</label>
+            <select id="proposal-template-select" onchange="App.setProposalTemplate(this.value)">${templateOptions}</select></div>
+        </div>`}
+  </div>
+
+  <div class="panel">
+    <h2>Customer Information</h2>
+    <p class="attach-hint" style="margin-top:-6px;">Fill in anything missing here — it saves to the deal and is used on the proposal.</p>
+    <div class="field-grid">
+      <div><label class="field-label">Customer Name</label>
+        <input type="text" value="${esc(d.customerName)}" onchange="App.updateDealField('${d.id}','customerName', this.value)"></div>
+      <div><label class="field-label">Company</label>
+        <input type="text" value="${esc(d.company)}" onchange="App.updateDealField('${d.id}','company', this.value)"></div>
+      <div><label class="field-label">Email Address</label>
+        <input type="text" value="${esc(d.email)}" onchange="App.updateDealField('${d.id}','email', this.value)"></div>
+    </div>
+    <div class="field-grid" style="margin-top:14px;">
+      <div><label class="field-label">Address</label>
+        <input type="text" value="${esc(d.address)}" onchange="App.updateDealField('${d.id}','address', this.value)"></div>
+      <div><label class="field-label">City</label>
+        <input type="text" value="${esc(d.city)}" onchange="App.updateDealField('${d.id}','city', this.value)"></div>
+      <div><label class="field-label">State</label>
+        <input type="text" value="${esc(d.state)}" onchange="App.updateDealField('${d.id}','state', this.value)"></div>
+      <div><label class="field-label">Zip</label>
+        <input type="text" value="${esc(d.zip)}" onchange="App.updateDealField('${d.id}','zip', this.value)"></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Line Items &amp; Pricing</h2>
+    <p class="attach-hint" style="margin-top:-6px;">Only description and client price show on the proposal — cost, markup, and margin stay internal.</p>
+    ${lineItemsHtml}
+    <div class="totals-bar">
+      <div class="stat"><div class="stat-label">Total Price</div><div class="stat-value">${money(dealClientPrice(d))}</div></div>
+    </div>
+  </div>
+
+  <div class="form-actions">
+    <button class="btn btn-outline" onclick="App.viewDeal('${d.id}')">Cancel</button>
+    <button class="btn btn-primary" id="download-proposal-btn" onclick="App.downloadProposalDocx('${d.id}')" ${allTemplates.length === 0 ? 'disabled' : ''}>Download as Word (.docx)</button>
+  </div>`;
+}
+
 // ---------- Init ----------
 let appInitialized = false;
 async function initApp() {
@@ -2075,6 +2544,10 @@ async function initApp() {
     try { await window.__firebaseMigrateLegacy(); } catch (e) { console.error('Migration failed:', e); }
   }
   await subscribeToDealsOnce();
+  if (window.__firebaseSeedTemplates) {
+    try { await window.__firebaseSeedTemplates(); } catch (e) { console.error('Template seed failed:', e); }
+  }
+  await subscribeToTemplatesOnce();
   render();
 }
 

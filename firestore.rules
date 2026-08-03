@@ -33,5 +33,9 @@ service cloud.firestore {
     match /users/{document=**} {
       allow read, write: if request.auth != null;
     }
+    // Reusable proposal boilerplate (scope of work, terms, exclusions, etc.)
+    match /templates/{document=**} {
+      allow read, write: if request.auth != null;
+    }
   }
 }
