@@ -711,6 +711,7 @@
     body { background: #fff; }
     main { max-width: 100%; padding: 0; }
     .panel { box-shadow: none; border: none; }
+    .table-scroll { overflow-x: visible; }
   }
 
   /* Real device width drives layout directly — no manual override needed. */
@@ -1475,7 +1476,7 @@ let currentFilter = 'all';
 let draftDeal = null;
 let currentDealId = null;
 let currentEstimateId = null; // which saved Material Estimate is showing in the print/open view
-let detailTab = 'overview'; // 'overview' | 'handoff' | 'engineering', for the deal detail view's tab bar
+let detailTab = 'overview'; // 'overview' | 'handoff' | 'engineering' | 'intake', for the deal detail view's tab bar
 let storageError = false;
 let storageErrorDetail = '';
 // Result of the last failed Submit for Approval attempt — an array of
@@ -1625,7 +1626,7 @@ function subscribeToMaterialPricingOnce() {
   });
 }
 
-const NOTIFICATION_TYPE_LABELS = { proposal: 'Proposal', handoff: 'Handoff Sheet', engineering: 'Engineering Order', 'material-estimate': 'Material Estimate' };
+const NOTIFICATION_TYPE_LABELS = { proposal: 'Proposal', handoff: 'Handoff Sheet', engineering: 'Engineering Order', intake: 'Intake Sheet', 'material-estimate': 'Material Estimate' };
 
 // Live inbox for the logged-in user — scoped by recipientId at the query
 // level (see window.__firebaseSubscribeNotifications) rather than filtered
@@ -1699,8 +1700,9 @@ function blankDeal() {
     // doc has even less room); "Download" always regenerates fresh from the
     // deal's current data, which is fine since these are effectively live
     // documents, not point-in-time snapshots.
-    documents: { proposal: null, handoff: null, engineering: null },
-    materialEstimates: [], // saved Material Calculator snapshots — see blankMaterialEstimate()
+    documents: { proposal: null, handoff: null, engineering: null, intake: null },
+    materialEstimates: [], // saved Material Calculator snapshots — see App.saveMaterialEstimate
+    intake: { assignedTo: '', selectedEstimateId: '' }, // Intake Sheet — see renderIntakeTab
     jobSite: { propertyType: '', accessDifficulty: '', notes: '' },
     sections: DEFAULT_SECTIONS.map(name => ({ id: uid('sec'), name, items: [] })),
     attachments: [],
@@ -2062,6 +2064,30 @@ function documentStatusLine(record, assignedTo) {
   if (!record) return 'Not yet generated';
   const assignedPart = assignedTo ? ` · Assigned to ${esc(assigneeName(assignedTo))}` : '';
   return `Generated ${esc(new Date(record.generatedAt).toLocaleDateString())} by ${esc(record.generatedBy || '—')}${assignedPart}`;
+}
+
+function postTypeSummary(rows) {
+  const parts = (rows || []).filter(r => r.qty > 0).map(r => `${r.qty} ${r.type}`);
+  return parts.length ? parts.join(', ') : 'N/A';
+}
+
+// Maps a saved Material Estimate onto the Intake Sheet's fields — component
+// breakdown and quantities only, no pricing (production doesn't need it).
+// Anything the chosen product doesn't use (e.g. Smoothstone has neither
+// panel nor post caps) reads "N/A" rather than a misleading 0.
+function computeIntakeFields(d, est) {
+  if (!est) return null;
+  const heightText = est.heightFt ? est.heightFt + ' ft high' : 'N/A';
+  const postSummary = postTypeSummary(est.postTypeRows);
+  return {
+    projectInfo: (d.customerName || 'Untitled deal') + (fullAddressLine(d) ? ' — ' + fullAddressLine(d) : ''),
+    wallLengthHeight: `${est.linearFeet} LF, ${heightText}`,
+    color: d.colorFinish || 'N/A',
+    panelsNeeded: est.kind === 'panel' ? `${est.secondaryValue} panels` : 'N/A',
+    postsNeeded: `${est.posts} posts (${postSummary})`,
+    postCapsNeeded: est.hasPostCaps ? `${est.posts} post caps (${postSummary})` : 'N/A',
+    panelCapsNeeded: est.hasPanelCaps ? `${est.posts} panel caps` : 'N/A'
+  };
 }
 
 // Resize + compress a photo client-side before storing it, so a multi-MB phone
@@ -2536,6 +2562,60 @@ async function buildEngineeringDocx(docxLib, d) {
 
   children.push(new Paragraph({ text: '', spacing: { after: 100 } }));
   children.push(para('Submitted By: ' + (e.submittedBy || '') + '     Reviewed By: ' + (e.reviewedBy || '') + '     Date: ' + (e.reviewDate || '')));
+
+  const doc = new Document({ sections: [{ children }] });
+  return Packer.toBlob(doc);
+}
+
+// Mirrors the company's printed "Intake Sheet" — logo, project info,
+// "Submit to Production Manager", and a component-quantity table pulled
+// from a saved Material Estimate. No pricing anywhere; production only
+// needs physical takeoff counts.
+async function buildIntakeDocx(docxLib, d, est) {
+  const { Document, Paragraph, TextRun, ImageRun, AlignmentType, Table, TableRow, TableCell, WidthType, Packer } = docxLib;
+  const fields = computeIntakeFields(d, est);
+
+  function cell(text, opts) {
+    opts = opts || {};
+    const params = { children: [new Paragraph({ children: [new TextRun({ text: text, bold: !!opts.bold })] })] };
+    if (opts.width) params.width = { size: opts.width, type: WidthType.PERCENTAGE };
+    return new TableCell(params);
+  }
+  function centered(text, opts) {
+    opts = opts || {};
+    return new Paragraph({ children: [new TextRun({ text, bold: !!opts.bold })], alignment: AlignmentType.CENTER, spacing: { after: opts.after != null ? opts.after : 120 } });
+  }
+  function row(label, value) {
+    return new TableRow({ children: [cell(label, { bold: true, width: 60 }), cell(value, { width: 40 })] });
+  }
+
+  const children = [];
+  try {
+    const logoData = await loadLetterheadLogo();
+    children.push(new Paragraph({
+      children: [new ImageRun({ data: logoData, transformation: { width: COMPANY_LETTERHEAD.logoWidth, height: COMPANY_LETTERHEAD.logoHeight }, type: 'png' })],
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 120 }
+    }));
+  } catch (e) {
+    // Logo is a nice-to-have — the sheet is still complete without it.
+  }
+
+  children.push(centered(fields.projectInfo));
+  children.push(centered('Submit to Production Manager'));
+  children.push(centered('PLEASE INCLUDE IF ANY, THE ENGINEERING PLANS', { bold: true, after: 240 }));
+
+  children.push(new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows: [
+      row('Total length and height of wall', fields.wallLengthHeight),
+      row('Integral color or paint? If integral what color?', fields.color),
+      row('Total panels needed if retaining is required include quantity separate from the regular panels.', fields.panelsNeeded),
+      row('Total post needed including height if it is more than our standard additional 2’ and how many lines, ends, and corner post. If retaining is required include quantity separate from the regular post.', fields.postsNeeded),
+      row('Total post caps needed including how many line, end, and corner post caps.', fields.postCapsNeeded),
+      row('How many panel caps are needed?', fields.panelCapsNeeded)
+    ]
+  }));
 
   const doc = new Document({ sections: [{ children }] });
   return Packer.toBlob(doc);
@@ -3101,6 +3181,7 @@ const App = {
     if (type === 'proposal') assigneeId = d.proposalAssignedTo;
     else if (type === 'handoff') assigneeId = d.handoff && d.handoff.assignedTo;
     else if (type === 'engineering') assigneeId = d.engineering && d.engineering.assignedTo;
+    else if (type === 'intake') assigneeId = d.intake && d.intake.assignedTo;
     else if (type === 'material-estimate') {
       const est = (d.materialEstimates || []).find(e => e.id === estimateId);
       assigneeId = est && est.assignedTo;
@@ -3112,7 +3193,7 @@ const App = {
       id: uid('notif'),
       recipientId: assignee.id,
       recipientName: assignee.name,
-      type, // 'proposal' | 'handoff' | 'engineering' | 'material-estimate'
+      type, // 'proposal' | 'handoff' | 'engineering' | 'intake' | 'material-estimate'
       dealId: d.id,
       estimateId: estimateId || null,
       customerName: d.customerName || 'Untitled deal',
@@ -3146,7 +3227,7 @@ const App = {
       currentEstimateId = n.estimateId;
     } else {
       currentView = 'detail';
-      detailTab = n.type === 'engineering' ? 'engineering' : 'handoff';
+      detailTab = n.type === 'engineering' ? 'engineering' : n.type === 'intake' ? 'intake' : 'handoff';
     }
     render();
   },
@@ -3168,6 +3249,7 @@ const App = {
       styleLabel: style.label,
       kind: product.kind,
       linearFeet: lf,
+      heightFt: product.kind === 'panel' ? style.height : null, // rail systems have no height concept
       unitPrice: style.pricePerLF,
       totalPrice: lf * style.pricePerLF,
       posts,
@@ -3294,6 +3376,31 @@ const App = {
       const blob = await buildEngineeringDocx(docxLib, d);
       downloadBlob(blob, (d.customerName || 'engineering').replace(/[^\w\- ]+/g, '').trim() + ' - Engineering Order.docx');
       await recordDocumentGenerated(d, 'engineering');
+    } catch (e) {
+      alert('Could not generate the Word document — check your connection and try again.');
+    }
+  },
+
+  async updateIntakeField(dealId, field, value) {
+    const d = deals.find(x => x.id === dealId);
+    if (!d) return;
+    d.intake = d.intake || { assignedTo: '', selectedEstimateId: '' };
+    d.intake[field] = value;
+    await saveDeal(d);
+  },
+
+  async downloadIntakeDocx(dealId) {
+    const d = deals.find(x => x.id === dealId);
+    if (!d) return;
+    const estimates = d.materialEstimates || [];
+    if (!estimates.length) { alert('Save a Material Estimate first — the Intake Sheet pulls its component breakdown from there.'); return; }
+    const intake = d.intake || {};
+    const est = estimates.find(e => e.id === intake.selectedEstimateId) || estimates[estimates.length - 1];
+    try {
+      const docxLib = await import('https://unpkg.com/docx@9.7.1/dist/index.mjs');
+      const blob = await buildIntakeDocx(docxLib, d, est);
+      downloadBlob(blob, (d.customerName || 'intake').replace(/[^\w\- ]+/g, '').trim() + ' - Intake Sheet.docx');
+      await recordDocumentGenerated(d, 'intake');
     } catch (e) {
       alert('Could not generate the Word document — check your connection and try again.');
     }
@@ -3802,6 +3909,34 @@ function renderDetail() {
 
   const overviewHtml = `
   <div class="panel">
+    <h2>Material Estimates</h2>
+    ${(d.materialEstimates && d.materialEstimates.length) ? d.materialEstimates.map(est => `
+      <div class="section-block">
+        <div class="section-head">
+          <strong>${esc(est.productName)} — ${esc(est.styleLabel)} (${est.linearFeet} LF)</strong>
+          <button class="btn btn-danger btn-small" onclick="App.removeMaterialEstimate('${d.id}','${est.id}')">✕</button>
+        </div>
+        <div style="padding:12px;">
+          <div class="totals-bar" style="margin-bottom:12px;">
+            <div class="stat"><div class="stat-label">Posts</div><div class="stat-value">${est.posts}</div></div>
+            <div class="stat"><div class="stat-label">${esc(est.secondaryLabel)}</div><div class="stat-value">${est.secondaryValue}</div></div>
+            ${est.hasPanelCaps ? `<div class="stat"><div class="stat-label">Panel Caps</div><div class="stat-value">${est.posts}</div></div>` : ''}
+            ${est.hasPostCaps ? `<div class="stat"><div class="stat-label">Post Caps</div><div class="stat-value">${est.posts}</div></div>` : ''}
+          </div>
+          <p class="attach-hint" style="margin:0 0 10px;">Saved ${esc(new Date(est.savedAt).toLocaleDateString())} by ${esc(est.savedBy || '—')}</p>
+          <div class="doc-download-row">
+            <select onchange="App.setMaterialEstimateAssignee('${d.id}','${est.id}', this.value)" style="max-width:220px;">
+              <option value="">Assign to...</option>
+              ${otherUserOptions(est.assignedTo)}
+            </select>
+            <button class="btn btn-outline btn-small" onclick="App.sendNotification('${d.id}','material-estimate','${est.id}')">🔔 Notify</button>
+            <button class="btn btn-outline btn-small" onclick="App.openMaterialEstimate('${d.id}','${est.id}')">Open / Print</button>
+          </div>
+        </div>
+      </div>`).join('') : `<div class="attach-hint">No material estimates saved yet — use the Material Calculator to add one.</div>`}
+  </div>
+
+  <div class="panel">
     <h2>Job Site Specifics</h2>
     <div class="job-site-summary">
       <div class="kv"><div class="k">Property Type</div><div class="v">${esc(d.jobSite.propertyType || '—')}</div></div>
@@ -3835,34 +3970,8 @@ function renderDetail() {
       <div class="kv"><div class="k">Proposal</div><div class="v">${documentStatusLine(d.documents && d.documents.proposal, d.proposalAssignedTo)}</div></div>
       <div class="kv"><div class="k">Handoff Sheet</div><div class="v">${documentStatusLine(d.documents && d.documents.handoff, d.handoff && d.handoff.assignedTo)}</div></div>
       <div class="kv"><div class="k">Engineering Order</div><div class="v">${documentStatusLine(d.documents && d.documents.engineering, d.engineering && d.engineering.assignedTo)}</div></div>
+      <div class="kv"><div class="k">Intake Sheet</div><div class="v">${documentStatusLine(d.documents && d.documents.intake, d.intake && d.intake.assignedTo)}</div></div>
     </div>
-  </div>
-
-  <div class="panel">
-    <h2>Material Estimates</h2>
-    ${(d.materialEstimates && d.materialEstimates.length) ? d.materialEstimates.map(est => `
-      <div class="section-block">
-        <div class="section-head">
-          <strong>${esc(est.productName)} — ${esc(est.styleLabel)} (${est.linearFeet} LF)</strong>
-          <button class="btn btn-danger btn-small" onclick="App.removeMaterialEstimate('${d.id}','${est.id}')">✕</button>
-        </div>
-        <div style="padding:12px;">
-          <div class="totals-bar" style="margin-bottom:12px;">
-            <div class="stat"><div class="stat-label">Total Price</div><div class="stat-value">${money(est.totalPrice)}</div></div>
-            <div class="stat"><div class="stat-label">Posts</div><div class="stat-value">${est.posts}</div></div>
-            <div class="stat"><div class="stat-label">${esc(est.secondaryLabel)}</div><div class="stat-value">${est.secondaryValue}</div></div>
-          </div>
-          <p class="attach-hint" style="margin:0 0 10px;">Saved ${esc(new Date(est.savedAt).toLocaleDateString())} by ${esc(est.savedBy || '—')}</p>
-          <div class="doc-download-row">
-            <select onchange="App.setMaterialEstimateAssignee('${d.id}','${est.id}', this.value)" style="max-width:220px;">
-              <option value="">Assign to...</option>
-              ${otherUserOptions(est.assignedTo)}
-            </select>
-            <button class="btn btn-outline btn-small" onclick="App.sendNotification('${d.id}','material-estimate','${est.id}')">🔔 Notify</button>
-            <button class="btn btn-outline btn-small" onclick="App.openMaterialEstimate('${d.id}','${est.id}')">Open / Print</button>
-          </div>
-        </div>
-      </div>`).join('') : `<div class="attach-hint">No material estimates saved yet — use the Material Calculator to add one.</div>`}
   </div>
 
   <div class="panel">
@@ -3901,6 +4010,7 @@ function renderDetail() {
 
   const tabBody = detailTab === 'handoff' ? renderHandoffTab(d, status)
     : detailTab === 'engineering' ? renderEngineeringTab(d)
+    : detailTab === 'intake' ? renderIntakeTab(d)
     : overviewHtml;
 
   return `
@@ -3917,6 +4027,7 @@ function renderDetail() {
       <button class="btn btn-outline btn-small" onclick="App.goProposal('${d.id}')">Generate Proposal</button>
       <button class="btn btn-outline btn-small" onclick="App.setDetailTab('handoff')">Handoff Sheet</button>
       <button class="btn btn-outline btn-small" onclick="App.setDetailTab('engineering')">Engineering Order</button>
+      <button class="btn btn-outline btn-small" onclick="App.setDetailTab('intake')">Intake Sheet</button>
       <button class="btn btn-outline btn-small" onclick="App.goMaterialCalculator('${d.id}')">Material Calculator</button>
       ${status === 'rejected' ? `<button class="btn btn-outline btn-small" onclick="App.editDeal('${d.id}')">Edit</button>` : ''}
     </div>
@@ -3926,6 +4037,7 @@ function renderDetail() {
     <div class="tab ${detailTab === 'overview' ? 'active' : ''}" onclick="App.setDetailTab('overview')">Overview</div>
     <div class="tab ${detailTab === 'handoff' ? 'active' : ''}" onclick="App.setDetailTab('handoff')">Handoff Sheet</div>
     <div class="tab ${detailTab === 'engineering' ? 'active' : ''}" onclick="App.setDetailTab('engineering')">Engineering Order</div>
+    <div class="tab ${detailTab === 'intake' ? 'active' : ''}" onclick="App.setDetailTab('intake')">Intake Sheet</div>
   </div>
 
   ${tabBody}`;
@@ -4228,6 +4340,71 @@ function renderEngineeringTab(d) {
         <input type="text" value="${esc(e.reviewedBy)}" onchange="App.updateEngineeringField('${d.id}', ['reviewedBy'], this.value)"></div>
       <div><label class="field-label">Date</label>
         <input type="date" value="${esc(e.reviewDate)}" onchange="App.updateEngineeringField('${d.id}', ['reviewDate'], this.value)"></div>
+    </div>
+  </div>`;
+}
+
+// Component-quantity handoff to production — pulled from a saved Material
+// Estimate (never entered separately), no pricing anywhere. Matches the
+// company's printed Intake Sheet: project info, "Submit to Production
+// Manager," and a component/quantity table with "N/A" wherever the chosen
+// product doesn't use that component (e.g. Smoothstone has no caps).
+function renderIntakeTab(d) {
+  const estimates = d.materialEstimates || [];
+  if (estimates.length === 0) {
+    return `<div class="empty-state">
+      <div class="big">No Material Estimate saved yet</div>
+      Save one from the Material Calculator first — the Intake Sheet pulls its component breakdown from there.
+    </div>`;
+  }
+
+  const intake = d.intake || { assignedTo: '', selectedEstimateId: '' };
+  const selectedEst = estimates.find(e => e.id === intake.selectedEstimateId) || estimates[estimates.length - 1];
+  const fields = computeIntakeFields(d, selectedEst);
+  const estimateOptions = estimates.map(e => `<option value="${e.id}" ${e.id===selectedEst.id?'selected':''}>${esc(e.productName)} — ${esc(e.styleLabel)} (${e.linearFeet} LF, saved ${new Date(e.savedAt).toLocaleDateString()})</option>`).join('');
+
+  return `
+  <div class="doc-download-row">
+    <button class="btn btn-primary" onclick="App.downloadIntakeDocx('${d.id}')">Download as Word (.docx)</button>
+    <span class="attach-hint">Pulled from the selected Material Estimate below — component quantities only, no pricing.</span>
+  </div>
+
+  <div class="doc-download-row">
+    <select onchange="App.updateIntakeField('${d.id}', 'assignedTo', this.value)" style="max-width:220px;">
+      <option value="">Assign to...</option>
+      ${otherUserOptions(intake.assignedTo)}
+    </select>
+    <button class="btn btn-outline btn-small" onclick="App.sendNotification('${d.id}','intake')">🔔 Notify</button>
+    <span class="attach-hint">Sends a link to this Intake Sheet to their inbox.</span>
+  </div>
+
+  <div class="panel">
+    <h2>Source Estimate</h2>
+    ${estimates.length > 1 ? `
+      <div class="field-grid" style="grid-template-columns:1fr;">
+        <div><label class="field-label">Material Estimate</label>
+          <select onchange="App.updateIntakeField('${d.id}', 'selectedEstimateId', this.value)">${estimateOptions}</select></div>
+      </div>` : `<p class="attach-hint" style="margin:0;">${esc(selectedEst.productName)} — ${esc(selectedEst.styleLabel)} (${selectedEst.linearFeet} LF)</p>`}
+  </div>
+
+  <div class="panel">
+    <h2>Intake Sheet</h2>
+    <p class="attach-hint" style="margin-top:-6px;">Submit to Production Manager. Please include, if any, the engineering plans.</p>
+    <div class="job-site-summary" style="margin-bottom:14px;">
+      <div class="kv"><div class="k">Project</div><div class="v">${esc(fields.projectInfo)}</div></div>
+    </div>
+    <div class="table-scroll">
+    <table class="items">
+      <thead><tr><th class="col-desc">Item</th><th>Value</th></tr></thead>
+      <tbody>
+        <tr><td class="col-desc">Total length and height of wall</td><td>${esc(fields.wallLengthHeight)}</td></tr>
+        <tr><td class="col-desc">Integral color or paint? If integral what color?</td><td>${esc(fields.color)}</td></tr>
+        <tr><td class="col-desc">Total panels needed (retaining qty separate if applicable)</td><td>${esc(fields.panelsNeeded)}</td></tr>
+        <tr><td class="col-desc">Total posts needed — line, end, and corner (retaining qty separate if applicable)</td><td>${esc(fields.postsNeeded)}</td></tr>
+        <tr><td class="col-desc">Total post caps needed — line, end, and corner</td><td>${esc(fields.postCapsNeeded)}</td></tr>
+        <tr><td class="col-desc">How many panel caps are needed?</td><td>${esc(fields.panelCapsNeeded)}</td></tr>
+      </tbody>
+    </table>
     </div>
   </div>`;
 }
@@ -4536,8 +4713,6 @@ function renderMaterialEstimateView() {
       <div class="kv"><div class="k">Linear Footage</div><div class="v">${est.linearFeet} LF</div></div>
     </div>
     <div class="totals-bar" style="margin-top:14px;">
-      <div class="stat"><div class="stat-label">Unit Price</div><div class="stat-value">${money(est.unitPrice)}/LF</div></div>
-      <div class="stat"><div class="stat-label">Total Price</div><div class="stat-value">${money(est.totalPrice)}</div></div>
       <div class="stat"><div class="stat-label">Posts</div><div class="stat-value">${est.posts}</div></div>
       <div class="stat"><div class="stat-label">${esc(est.secondaryLabel)}</div><div class="stat-value">${est.secondaryValue}</div></div>
       ${capsHtml}
