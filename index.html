@@ -1260,6 +1260,7 @@ const COST_TYPES = ['Labor','Material','Subcontractor','Equipment','Other','None
 const PROPERTY_TYPES = ['Single-Family','Multi-Family','New Construction','Remodel / Addition','Commercial'];
 const ACCESS_OPTIONS = ['Easy — full access','Moderate — some restrictions','Difficult — tight / crane needed'];
 const DEFAULT_SECTIONS = ['General Requirements','Labor & Installation','Materials & Products','Mobilization'];
+const INSTALL_TYPES = ['Materials Only', 'Turnkey (Materials + Install)'];
 
 const POST_TYPES = ['Line Posts','End Posts','Corner Posts','T-Posts'];
 
@@ -1337,6 +1338,10 @@ let currentDealId = null;
 let detailTab = 'overview'; // 'overview' | 'handoff' | 'engineering', for the deal detail view's tab bar
 let storageError = false;
 let storageErrorDetail = '';
+// Result of the last failed Submit for Approval attempt — an array of
+// { title, missing: [...] } per incomplete CFI SOP checklist category, or
+// null once the form is clean or hasn't been submitted yet this session.
+let submissionChecklistErrors = null;
 let materialCalcState = { productKey: MATERIAL_CALC_PRODUCTS[0].key, styleKey: MATERIAL_CALC_PRODUCTS[0].styles[0].key, linearFeet: '', postTypeRows: [] };
 let editingMaterialPricing = false;
 let materialPricingDraft = null;
@@ -1487,6 +1492,12 @@ function blankDeal() {
     colorFinish: '', // e.g. "Sequoia Sandstone Integral"
     linearFeet: '', // e.g. "115"
     wallHeightSpec: '', // e.g. "6"
+    panelPostStyle: '', // e.g. "Standard post caps, flat panel face"
+    specialRequirements: '', // e.g. "Match existing gate color" or "None"
+    demoRequirements: '', // e.g. "Remove existing 120ft wood fence" or "None"
+    installType: '', // one of INSTALL_TYPES
+    clarificationsAssumptions: '',
+    exclusions: '', // deal-specific, distinct from a proposal template's boilerplate exclusions
     jobSite: { propertyType: '', accessDifficulty: '', notes: '' },
     sections: DEFAULT_SECTIONS.map(name => ({ id: uid('sec'), name, items: [] })),
     attachments: [],
@@ -1754,6 +1765,74 @@ function dealStatus(deal) {
   if (deal.approvals.connor === false || deal.approvals.sandy === false) return 'rejected';
   if (deal.approvals.connor === true && deal.approvals.sandy === true) return 'approved';
   return 'pending';
+}
+
+// Gate between a rep's Submit for Approval and Sandy/Connor's review queue,
+// mirroring CFI SOP "Improvement 02 — Proposal Process": the 8 requirements
+// a proposal must meet before it's submittable. Returns one entry per
+// incomplete category — an empty array means the deal is ready to submit.
+const JOBSITE_PHOTO_MINIMUM = 3;
+
+function evaluateSubmissionChecklist(d) {
+  const categories = [];
+  const need = (title, missing) => { if (missing.length) categories.push({ title, missing }); };
+  // Deals saved before this checklist existed won't have the newer fields
+  // at all (undefined, not ''), so read every field through this.
+  const text = (v) => (v || '').trim();
+
+  need('Customer & Project Info', [
+    !text(d.customerName) && 'Customer Name',
+    !text(d.address) && 'Project Address',
+    (!text(d.city) || !text(d.state) || !text(d.zip)) && 'City / State / Zip',
+    !text(d.email) && 'Contact Info (Email)',
+    !d.date && 'Proposal Date',
+    !text(d.repName) && 'Rep Name',
+  ].filter(Boolean));
+
+  need('Clear Job Description', [
+    !text(d.productDesign) && 'Wall Type / Product',
+    !text(d.wallHeightSpec) && 'Height',
+    !text(d.linearFeet) && 'Linear Feet',
+    !text(d.demoRequirements) && 'Demo Requirements (enter "None" if not applicable)',
+    !(d.jobSite && d.jobSite.accessDifficulty) && 'Site Access',
+    !d.installType && 'Materials vs. Turnkey',
+  ].filter(Boolean));
+
+  const photoCount = (d.attachments || []).filter(a => (a.category || 'Photo') === 'Photo').length;
+  if (photoCount < JOBSITE_PHOTO_MINIMUM) {
+    need('Jobsite Pictures', [`At least ${JOBSITE_PHOTO_MINIMUM} photos covering the work area, existing walls, access points, grade changes, and obstructions (${photoCount} attached)`]);
+  }
+
+  const hasDescribedItem = d.sections.some(s => s.items.some(i => text(i.desc)));
+  if (!hasDescribedItem) {
+    need('Scope of Work', ['At least one described line item in the Cost Breakdown']);
+  }
+
+  need('Product Information', [
+    !text(d.productDesign) && 'Series / Product Design',
+    !text(d.wallHeightSpec) && 'Height',
+    !text(d.linearFeet) && 'Linear Feet',
+    !text(d.panelPostStyle) && 'Panel / Post Style',
+    !text(d.colorFinish) && 'Color / Finish',
+    !text(d.specialRequirements) && 'Special Requirements (enter "None" if not applicable)',
+  ].filter(Boolean));
+
+  const hasAnyItem = d.sections.some(s => s.items.length > 0);
+  if (!hasAnyItem) {
+    need('Pricing (Full Breakdown)', ['At least one line item in the Cost Breakdown']);
+  } else if (dealClientPrice(d) <= 0) {
+    need('Pricing (Full Breakdown)', ['A completed price breakdown (Client Price is currently $0)']);
+  }
+
+  if (!text(d.clarificationsAssumptions)) {
+    need('Clarifications & Assumptions', ['Clarifications & Assumptions (enter "None" if not applicable)']);
+  }
+
+  if (!text(d.exclusions)) {
+    need('Exclusions', ['Exclusions — everything NOT included (enter "None" if not applicable)']);
+  }
+
+  return categories;
 }
 
 function esc(s) {
@@ -2248,6 +2327,7 @@ const App = {
 
   goNewDeal() {
     draftDeal = blankDeal();
+    submissionChecklistErrors = null;
     currentView = 'form';
     render();
   },
@@ -2431,6 +2511,7 @@ const App = {
     if (!d) return;
     draftDeal = JSON.parse(JSON.stringify(d));
     if (!draftDeal.attachments) draftDeal.attachments = [];
+    submissionChecklistErrors = null;
     currentView = 'form';
     render();
   },
@@ -2677,16 +2758,18 @@ const App = {
     if (a) a.description = value;
   },
 
+  // Gate: nothing reaches Sandy/Connor's queue until it clears every CFI SOP
+  // checklist category — see evaluateSubmissionChecklist.
   async submitDeal() {
-    if (!draftDeal.customerName.trim()) {
-      alert('Add a customer / job name before submitting.');
+    const checklist = evaluateSubmissionChecklist(draftDeal);
+    if (checklist.length > 0) {
+      submissionChecklistErrors = checklist;
+      render();
+      const banner = document.getElementById('submission-checklist-banner');
+      if (banner) banner.scrollIntoView({ behavior: 'smooth', block: 'start' });
       return;
     }
-    const hasItems = draftDeal.sections.some(s => s.items.length > 0);
-    if (!hasItems) {
-      alert('Add at least one line item before submitting.');
-      return;
-    }
+    submissionChecklistErrors = null;
     const existingIdx = deals.findIndex(d => d.id === draftDeal.id);
     if (existingIdx >= 0) {
       // Editing only ever happens on a rejected deal (see the Edit button in
@@ -2705,6 +2788,7 @@ const App = {
 
   cancelForm() {
     draftDeal = null;
+    submissionChecklistErrors = null;
     currentView = 'list';
     render();
   },
@@ -3129,8 +3213,18 @@ function renderForm() {
     deleteOnClick: `App.removeAttachment('${a.id}')`
   })).join('');
 
+  const checklistBannerHtml = !submissionChecklistErrors || submissionChecklistErrors.length === 0 ? '' : `
+  <div class="banner" id="submission-checklist-banner">
+    <strong>This proposal is missing required information — Sandy and Connor can't review it until it's complete (CFI SOP Improvement 02).</strong>
+    <ul style="margin:8px 0 0; padding-left:18px;">
+      ${submissionChecklistErrors.map(c => `<li><strong>${esc(c.title)}:</strong> ${c.missing.map(esc).join(', ')}</li>`).join('')}
+    </ul>
+  </div>`;
+
   return `
   <div class="back-link" onclick="App.cancelForm()">&larr; Back to all deals</div>
+
+  ${checklistBannerHtml}
 
   <div class="panel">
     <div class="attach-btn-row">
@@ -3182,6 +3276,25 @@ function renderForm() {
       <div><label class="field-label">Height</label>
         <input type="text" placeholder="e.g. 6" value="${esc(d.wallHeightSpec)}" oninput="App.updateHeaderField('wallHeightSpec', this.value)"></div>
     </div>
+    <div class="field-grid" style="margin-top:14px;">
+      <div><label class="field-label">Panel / Post Style</label>
+        <input type="text" placeholder="e.g. Standard post caps, flat panel face" value="${esc(d.panelPostStyle)}" oninput="App.updateHeaderField('panelPostStyle', this.value)"></div>
+      <div><label class="field-label">Special Requirements</label>
+        <input type="text" placeholder='e.g. "None" or match existing gate color' value="${esc(d.specialRequirements)}" oninput="App.updateHeaderField('specialRequirements', this.value)"></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Job Description</h2>
+    <div class="field-grid">
+      <div><label class="field-label">Demo Requirements</label>
+        <input type="text" placeholder='e.g. "None" or remove existing 120ft wood fence' value="${esc(d.demoRequirements)}" oninput="App.updateHeaderField('demoRequirements', this.value)"></div>
+      <div><label class="field-label">Materials vs. Turnkey</label>
+        <select onchange="App.updateHeaderField('installType', this.value)">
+          <option value="">Select...</option>
+          ${INSTALL_TYPES.map(t => `<option value="${t}" ${t===d.installType?'selected':''}>${t}</option>`).join('')}
+        </select></div>
+    </div>
   </div>
 
   <div class="panel">
@@ -3218,6 +3331,19 @@ function renderForm() {
       <div class="stat"><div class="stat-label">Client Price</div><div class="stat-value" id="grand-clientprice">${money(dealClientPrice(d))}</div></div>
       <div class="stat"><div class="stat-label">Margin %</div><div class="stat-value" id="grand-margin">${dealMargin(d).toFixed(1)}%</div></div>
       <div class="stat"><div class="stat-label">Profit $</div><div class="stat-value" id="grand-profit">${money(dealProfit(d))}</div></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Clarifications, Assumptions &amp; Exclusions</h2>
+    <div><label class="field-label">Clarifications &amp; Assumptions</label>
+      <textarea class="notes-autogrow" placeholder='Engineering, soil, grade, access, utilities, city/permit, customer responsibilities — enter "None" if not applicable.'
+        oninput="App.updateHeaderField('clarificationsAssumptions', this.value); autoGrowTextarea(this)">${esc(d.clarificationsAssumptions)}</textarea>
+    </div>
+    <div style="margin-top:12px;">
+      <label class="field-label">Exclusions</label>
+      <textarea class="notes-autogrow" placeholder='Everything NOT included — landscaping, irrigation, surveying, rock excavation, etc. Enter "None" if not applicable.'
+        oninput="App.updateHeaderField('exclusions', this.value); autoGrowTextarea(this)">${esc(d.exclusions)}</textarea>
     </div>
   </div>
 
