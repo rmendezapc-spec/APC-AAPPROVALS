@@ -1268,14 +1268,14 @@ const POST_TYPES = ['Line Posts','End Posts','Corner Posts','T-Posts'];
 // fence taken off by height — see renderMaterialCalculator's "Estimation
 // Methodology" panel for the formulas.
 const MATERIAL_CALC_PRODUCTS = [
-  { key: 'woodcrete-rail', name: 'Woodcrete Rail', kind: 'rail', styles: [
+  { key: 'woodcrete-rail', name: 'Woodcrete Rail', kind: 'rail', hasPostCaps: true, styles: [
     { key: '2rail', label: '2 Rail System', pricePerLF: 39.95, rails: 2 },
     { key: '3rail', label: '3 Rail System', pricePerLF: 49.95, rails: 3 },
     { key: '4rail', label: '4 Rail System', pricePerLF: 59.95, rails: 4 },
     { key: '4railslat', label: '4 Rail Slat Fence', pricePerLF: 52.00, rails: 4 },
     { key: '7railslat', label: '7 Rail Slat Fence', pricePerLF: 65.00, rails: 7 },
   ]},
-  { key: 'smoothstone', name: 'Smoothstone', kind: 'panel', styles: [
+  { key: 'smoothstone', name: 'Smoothstone', kind: 'panel', hasPostCaps: false, hasPanelCaps: false, styles: [
     { key: 'h5', label: '5 foot high fence', pricePerLF: 50, height: 5 },
     { key: 'h6', label: '6 foot high fence', pricePerLF: 55, height: 6 },
     { key: 'h7', label: '7 foot high fence', pricePerLF: 75, height: 7 },
@@ -1283,7 +1283,7 @@ const MATERIAL_CALC_PRODUCTS = [
     { key: 'h9', label: '9 foot high fence', pricePerLF: 95, height: 9 },
     { key: 'h10', label: '10 foot high fence', pricePerLF: 105, height: 10 },
   ]},
-  { key: 'chiselstone', name: 'Chiselstone', kind: 'panel', styles: [
+  { key: 'chiselstone', name: 'Chiselstone', kind: 'panel', hasPostCaps: true, hasPanelCaps: true, styles: [
     { key: 'h4', label: '4 foot high fence', pricePerLF: 40, height: 4 },
     { key: 'h5', label: '5 foot high fence', pricePerLF: 50, height: 5 },
     { key: 'h6', label: '6 foot high fence', pricePerLF: 55, height: 6 },
@@ -1295,7 +1295,7 @@ const MATERIAL_CALC_PRODUCTS = [
     { key: 'h12', label: '12 foot high fence', pricePerLF: 125, height: 12 },
     { key: 'h13', label: '13 foot high fence', pricePerLF: 135, height: 13 },
   ]},
-  { key: 'woodcrete', name: 'Woodcrete', kind: 'panel', styles: [
+  { key: 'woodcrete', name: 'Woodcrete', kind: 'panel', hasPostCaps: false, hasPanelCaps: true, styles: [
     { key: 'h4', label: '4 foot high fence', pricePerLF: 45, height: 4 },
     { key: 'h5', label: '5 foot high fence', pricePerLF: 50, height: 5 },
     { key: 'h6', label: '6 foot high fence', pricePerLF: 55, height: 6 },
@@ -1306,7 +1306,7 @@ const MATERIAL_CALC_PRODUCTS = [
     { key: 'h11', label: '11 foot high fence', pricePerLF: 115, height: 11 },
     { key: 'h12', label: '12 foot high fence', pricePerLF: 125, height: 12 },
   ]},
-  { key: 'rusticbrick', name: 'Rusticbrick', kind: 'panel', styles: [
+  { key: 'rusticbrick', name: 'Rusticbrick', kind: 'panel', hasPostCaps: false, hasPanelCaps: true, styles: [
     { key: 'h5', label: '5 foot high fence', pricePerLF: 50, height: 5 },
     { key: 'h6', label: '6 foot high fence', pricePerLF: 55, height: 6 },
     { key: 'h7', label: '7 foot high fence', pricePerLF: 75, height: 7 },
@@ -1314,7 +1314,7 @@ const MATERIAL_CALC_PRODUCTS = [
     { key: 'h9', label: '9 foot high fence', pricePerLF: 95, height: 9 },
     { key: 'h10', label: '10 foot high fence', pricePerLF: 105, height: 10 },
   ]},
-  { key: 'blockcrete', name: 'Blockcrete', kind: 'panel', styles: [
+  { key: 'blockcrete', name: 'Blockcrete', kind: 'panel', hasPostCaps: true, hasPanelCaps: true, styles: [
     { key: 'h2', label: '2 foot high fence', pricePerLF: 40, height: 2 },
     { key: 'h3', label: '3 foot high fence', pricePerLF: 45, height: 3 },
     { key: 'h4', label: '4 foot high fence', pricePerLF: 50, height: 4 },
@@ -1433,23 +1433,27 @@ function subscribeToTemplatesOnce() {
 }
 
 // Overlays saved per-LF prices onto MATERIAL_CALC_PRODUCTS's built-in
-// defaults — any style not yet customized just keeps its default price.
-function applyMaterialPricingOverrides(pricing) {
-  if (!pricing) return;
+// defaults — any product name or style price not yet customized just keeps
+// its default.
+function applyMaterialPricingOverrides(data) {
+  if (!data) return;
   MATERIAL_CALC_PRODUCTS.forEach(p => {
-    const overrides = pricing[p.key];
-    if (!overrides) return;
-    p.styles.forEach(s => {
-      if (typeof overrides[s.key] === 'number') s.pricePerLF = overrides[s.key];
-    });
+    const override = data[p.key];
+    if (!override) return;
+    if (typeof override.name === 'string' && override.name.trim()) p.name = override.name.trim();
+    if (override.styles) {
+      p.styles.forEach(s => {
+        if (typeof override.styles[s.key] === 'number') s.pricePerLF = override.styles[s.key];
+      });
+    }
   });
 }
 
 function currentMaterialPricingMap() {
   const map = {};
   MATERIAL_CALC_PRODUCTS.forEach(p => {
-    map[p.key] = {};
-    p.styles.forEach(s => { map[p.key][s.key] = s.pricePerLF; });
+    map[p.key] = { name: p.name, styles: {} };
+    p.styles.forEach(s => { map[p.key].styles[s.key] = s.pricePerLF; });
   });
   return map;
 }
@@ -2344,18 +2348,26 @@ const App = {
     render();
   },
 
-  // Fires on blur/Enter (onchange), not per keystroke, so there's no focus
-  // loss to worry about here — no need to patch the DOM in place.
+  // Both fire on blur/Enter (onchange), not per keystroke, so there's no
+  // focus loss to worry about here — no need to patch the DOM in place.
   setMaterialPriceDraft(productKey, styleKey, value) {
     if (!materialPricingDraft) return;
-    materialPricingDraft[productKey][styleKey] = Number(value) || 0;
+    materialPricingDraft[productKey].styles[styleKey] = Number(value) || 0;
+  },
+
+  setMaterialNameDraft(productKey, value) {
+    if (!materialPricingDraft) return;
+    materialPricingDraft[productKey].name = value;
   },
 
   async saveMaterialPricing() {
     if (!isAdminUser(currentUser) || !materialPricingDraft) return;
     MATERIAL_CALC_PRODUCTS.forEach(p => {
+      const draft = materialPricingDraft[p.key];
+      if (!draft) return;
+      if (typeof draft.name === 'string' && draft.name.trim()) p.name = draft.name.trim();
       p.styles.forEach(s => {
-        const v = materialPricingDraft[p.key] && materialPricingDraft[p.key][s.key];
+        const v = draft.styles && draft.styles[s.key];
         if (typeof v === 'number' && !Number.isNaN(v)) s.pricePerLF = v;
       });
     });
@@ -3828,15 +3840,16 @@ function materialCalcResultsHtml() {
 
   const totalPrice = lf * style.pricePerLF;
   const posts = computeMaterialCalcPosts();
+  const postCapsHtml = product.hasPostCaps ? `<div class="stat"><div class="stat-label">Post Caps</div><div class="stat-value">${posts}</div></div>` : '';
   return `
     <div class="stat"><div class="stat-label">Unit Price</div><div class="stat-value">${money(style.pricePerLF)}/LF</div></div>
     <div class="stat"><div class="stat-label">Total Price</div><div class="stat-value">${money(totalPrice)}</div></div>
     <div class="stat"><div class="stat-label">Posts</div><div class="stat-value">${posts}</div></div>
     ${product.kind === 'rail'
-      ? `<div class="stat"><div class="stat-label">Rails</div><div class="stat-value">${posts * style.rails}</div></div>`
+      ? `<div class="stat"><div class="stat-label">Rails</div><div class="stat-value">${posts * style.rails}</div></div>${postCapsHtml}`
       : `<div class="stat"><div class="stat-label">Panels</div><div class="stat-value">${posts * style.height}</div></div>
-         <div class="stat"><div class="stat-label">Panel Caps</div><div class="stat-value">${posts}</div></div>`}
-    <div class="stat"><div class="stat-label">Post Caps</div><div class="stat-value">${posts}</div></div>`;
+         ${product.hasPanelCaps ? `<div class="stat"><div class="stat-label">Panel Caps</div><div class="stat-value">${posts}</div></div>` : ''}
+         ${postCapsHtml}`}`;
 }
 
 function materialCalcPostTallyHtml(posts) {
@@ -3879,20 +3892,23 @@ function materialCalcPostBreakdownHtml(posts) {
 function materialCalcPricingReferenceHtml() {
   const canEdit = isAdminUser(currentUser);
   const editControls = !canEdit ? '' : editingMaterialPricing
-    ? `<button class="btn btn-primary btn-small" onclick="App.saveMaterialPricing()">Save Prices</button>
+    ? `<button class="btn btn-primary btn-small" onclick="App.saveMaterialPricing()">Save Changes</button>
        <button class="btn btn-outline btn-small" onclick="App.cancelEditMaterialPricing()">Cancel</button>`
-    : `<button class="btn btn-outline btn-small" onclick="App.startEditMaterialPricing()">Edit Prices</button>`;
+    : `<button class="btn btn-outline btn-small" onclick="App.startEditMaterialPricing()">Edit Prices &amp; Names</button>`;
 
   const tablesHtml = MATERIAL_CALC_PRODUCTS.map(p => `
     <div class="section-block">
-      <div class="section-head"><strong>${esc(p.name)}</strong></div>
+      <div class="section-head">${editingMaterialPricing
+        ? `<input type="text" style="font-weight:700; max-width:280px;" value="${esc(materialPricingDraft[p.key].name)}"
+              onchange="App.setMaterialNameDraft('${p.key}', this.value)">`
+        : `<strong>${esc(p.name)}</strong>`}</div>
       <div class="table-scroll">
       <table class="items">
         <thead><tr><th class="col-desc">Style</th><th>Price / LF</th></tr></thead>
         <tbody>${p.styles.map(s => `<tr><td class="col-desc">${esc(s.label)}</td><td class="num">${
           editingMaterialPricing
             ? `<input type="number" step="0.01" min="0" style="max-width:110px; text-align:right;"
-                  value="${materialPricingDraft[p.key][s.key]}" onchange="App.setMaterialPriceDraft('${p.key}','${s.key}', this.value)">`
+                  value="${materialPricingDraft[p.key].styles[s.key]}" onchange="App.setMaterialPriceDraft('${p.key}','${s.key}', this.value)">`
             : money(s.pricePerLF)
         }</td></tr>`).join('')}</tbody>
       </table>
@@ -3943,7 +3959,7 @@ function renderMaterialCalculator() {
     <h2>Estimation Methodology</h2>
     <ul style="margin:0; padding-left:18px; line-height:1.7;">
       <li><strong>Woodcrete Rail systems:</strong> Posts = ROUNDUP(LF &divide; 8) + 1 spare post. Rails = Posts &times; the rail count of the selected system (2, 3, 4, or 7). Post caps = number of posts.</li>
-      <li><strong>All other styles</strong> (Smoothstone, Chiselstone, Woodcrete, Rusticbrick, Blockcrete): Posts = ROUNDUP(LF &divide; 5) + 1 spare post. Panels = Posts &times; fence height (ft). Panel caps and post caps both equal the number of posts.</li>
+      <li><strong>All other styles</strong> (Smoothstone, Chiselstone, Woodcrete, Rusticbrick, Blockcrete): Posts = ROUNDUP(LF &divide; 5) + 1 spare post. Panels = Posts &times; fence height (ft). Where shown, panel caps and post caps both equal the number of posts — not every style uses both: Smoothstone uses neither, Woodcrete and Rusticbrick use panel caps only, and Chiselstone and Blockcrete use both.</li>
       <li>All prices are per linear foot, install only. Use the total price and takeoff counts above to build out the line items on the estimate.</li>
     </ul>
   </div>
