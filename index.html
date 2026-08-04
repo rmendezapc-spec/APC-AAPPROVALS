@@ -195,6 +195,70 @@
   }
   .settings-menu-item:hover { background: var(--panel-alt); }
 
+  .notif-wrap { position: relative; }
+
+  .notif-badge {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 3px;
+    border-radius: 8px;
+    background: var(--red);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 16px;
+    text-align: center;
+  }
+
+  .notif-menu {
+    display: none;
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    width: 340px;
+    max-height: 420px;
+    overflow-y: auto;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-md);
+    padding: 8px;
+    flex-direction: column;
+    gap: 2px;
+    z-index: 10;
+  }
+  .notif-menu.open { display: flex; }
+
+  .notif-menu-header {
+    padding: 6px 10px 8px;
+    margin: 0 0 4px;
+    border-bottom: 1px solid var(--line);
+    color: var(--ink-soft);
+    font-weight: 700;
+    font-size: 13px;
+    text-transform: uppercase;
+  }
+
+  .notif-empty {
+    padding: 14px 10px;
+    color: var(--muted);
+    font-size: 13.5px;
+  }
+
+  .notif-item {
+    padding: 9px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    color: var(--ink);
+  }
+  .notif-item:hover { background: var(--panel-alt); }
+  .notif-item.unread { background: var(--panel-alt); }
+  .notif-item .notif-text { font-size: 13.5px; line-height: 1.4; color: var(--ink); }
+  .notif-item .notif-time { font-size: 11px; color: var(--muted); margin-top: 3px; }
+
   main {
     max-width: min(2000px, 97vw);
     margin: 0 auto;
@@ -751,6 +815,15 @@
   <div class="nav">
     <button class="btn btn-ghost" onclick="App.goList()">All Deals</button>
     <button class="btn btn-primary" onclick="App.goNewDeal()">+ New Deal</button>
+    <div class="notif-wrap">
+      <button class="btn btn-ghost icon-btn" id="notif-btn" onclick="toggleNotifMenu(event)" title="Notifications">
+        🔔<span class="notif-badge" id="notif-badge" style="display:none;">0</span>
+      </button>
+      <div class="notif-menu" id="notif-menu">
+        <div class="notif-menu-header">Notifications</div>
+        <div id="notif-list"></div>
+      </div>
+    </div>
     <div class="settings-wrap">
       <button class="btn btn-ghost icon-btn" id="settings-btn" onclick="toggleSettingsMenu(event)" title="Settings">⚙️</button>
       <div class="settings-menu" id="settings-menu">
@@ -775,7 +848,7 @@
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.17.0/firebase-app.js";
-  import { getFirestore, collection, doc, setDoc, deleteDoc, getDoc, getDocs, onSnapshot } from "https://www.gstatic.com/firebasejs/12.17.0/firebase-firestore.js";
+  import { getFirestore, collection, doc, setDoc, deleteDoc, getDoc, getDocs, onSnapshot, query, where } from "https://www.gstatic.com/firebasejs/12.17.0/firebase-firestore.js";
   import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/12.17.0/firebase-auth.js";
   import { getAI, getGenerativeModel, GoogleAIBackend } from "https://www.gstatic.com/firebasejs/12.17.0/firebase-ai.js";
 
@@ -848,6 +921,7 @@
   const usersCollRef = collection(db, 'users');
   const templatesCollRef = collection(db, 'templates');
   const settingsCollRef = collection(db, 'settings');
+  const notificationsCollRef = collection(db, 'notifications');
 
   // Each deal is its own document, keyed by the deal's own id. This avoids the
   // 1MB single-document cap and the "last write wins, whole list" concurrency
@@ -1014,6 +1088,47 @@
     });
   };
 
+  // A user's inbox — one document per "X sent you a Y for Z" event, created
+  // when a rep assigns and sends a Proposal, Handoff Sheet, or Engineering
+  // Order. Queried per-recipient rather than kept on the deal itself so a
+  // user's inbox doesn't require scanning every deal in the collection.
+  window.__firebaseSaveNotification = async function (notification) {
+    try {
+      await setDoc(doc(notificationsCollRef, notification.id), notification);
+      return { ok: true };
+    } catch (e) {
+      console.error('Firestore save notification failed:', e);
+      return { ok: false, error: (e && e.message) || String(e) };
+    }
+  };
+
+  window.__firebaseMarkNotificationRead = async function (notificationId) {
+    try {
+      await setDoc(doc(notificationsCollRef, notificationId), { read: true }, { merge: true });
+      return { ok: true };
+    } catch (e) {
+      console.error('Firestore mark-read failed:', e);
+      return { ok: false, error: (e && e.message) || String(e) };
+    }
+  };
+
+  // Returns the onSnapshot unsubscribe function — the caller uses it to tear
+  // down the previous user's listener when a different user logs in on the
+  // same tab (Log Out doesn't reload the page), so a stale listener can't
+  // clobber the new user's inbox with the old one's data.
+  window.__firebaseSubscribeNotifications = function (recipientId, onData, onError) {
+    const q = query(notificationsCollRef, where('recipientId', '==', recipientId));
+    return onSnapshot(q, (snap) => {
+      const arr = [];
+      snap.forEach((d) => arr.push(d.data()));
+      arr.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      onData(arr);
+    }, (err) => {
+      console.error('Firestore listen error (notifications):', err);
+      if (onError) onError(err);
+    });
+  };
+
   // Seed one starter template so there's always something to pick, without
   // overwriting anything a team member already created/edited.
   window.__firebaseSeedTemplates = async function () {
@@ -1087,6 +1202,7 @@
 // chat messages automatically.
 let allUsers = [];
 let currentUser = null;
+let notifications = []; // the logged-in user's inbox, newest first
 
 function populateUserSelect() {
   const select = document.getElementById('login-user-select');
@@ -1153,12 +1269,16 @@ function enterApp() {
   document.getElementById('app').style.display = 'block';
   updateUserChrome();
   initApp();
+  subscribeToNotificationsOnce(); // fresh every login — see its own comment
   render();
 }
 
 function logout() {
   currentUser = null;
   try { localStorage.removeItem('apc_current_user_id'); } catch (e) {}
+  if (notifUnsubscribe) { notifUnsubscribe(); notifUnsubscribe = null; }
+  notifications = [];
+  renderNotifChrome();
   updateUserChrome();
   currentView = 'list';
   currentDealId = null;
@@ -1186,9 +1306,21 @@ function closeSettingsMenu() {
   if (menu) menu.classList.remove('open');
 }
 
+function toggleNotifMenu(event) {
+  if (event) event.stopPropagation();
+  document.getElementById('notif-menu').classList.toggle('open');
+}
+
+function closeNotifMenu() {
+  const menu = document.getElementById('notif-menu');
+  if (menu) menu.classList.remove('open');
+}
+
 document.addEventListener('click', (e) => {
   const wrap = document.querySelector('.settings-wrap');
   if (wrap && !wrap.contains(e.target)) closeSettingsMenu();
+  const notifWrap = document.querySelector('.notif-wrap');
+  if (notifWrap && !notifWrap.contains(e.target)) closeNotifMenu();
 });
 
 function toggleTheme() {
@@ -1475,6 +1607,49 @@ function subscribeToMaterialPricingOnce() {
   });
 }
 
+const NOTIFICATION_TYPE_LABELS = { proposal: 'Proposal', handoff: 'Handoff Sheet', engineering: 'Engineering Order' };
+
+// Live inbox for the logged-in user — scoped by recipientId at the query
+// level (see window.__firebaseSubscribeNotifications) rather than filtered
+// client-side, so this stays cheap as the collection grows across users.
+// Called fresh on every login (see enterApp), not just once per page load,
+// since Log Out lets a different person log in on the same tab without a
+// reload — the old listener is torn down first so it can't keep firing and
+// clobbering the new user's inbox with stale data.
+let notifUnsubscribe = null;
+function subscribeToNotificationsOnce() {
+  return new Promise((resolve) => {
+    if (notifUnsubscribe) { notifUnsubscribe(); notifUnsubscribe = null; }
+    if (!window.__firebaseSubscribeNotifications || !currentUser) { resolve(); return; }
+    let settled = false;
+    notifUnsubscribe = window.__firebaseSubscribeNotifications(currentUser.id, (list) => {
+      notifications = list;
+      renderNotifChrome();
+      if (!settled) { settled = true; resolve(); }
+    }, () => { if (!settled) { settled = true; resolve(); } });
+  });
+}
+
+// The notification bell lives in the header, outside #main, so it's updated
+// directly (like updateUserChrome) rather than through the render() dispatcher.
+function renderNotifChrome() {
+  const badge = document.getElementById('notif-badge');
+  if (badge) {
+    const unread = notifications.filter(n => !n.read).length;
+    badge.textContent = unread > 99 ? '99+' : String(unread);
+    badge.style.display = unread > 0 ? '' : 'none';
+  }
+  const list = document.getElementById('notif-list');
+  if (!list) return;
+  list.innerHTML = notifications.length === 0
+    ? `<div class="notif-empty">No notifications yet.</div>`
+    : notifications.map(n => `
+      <div class="notif-item ${n.read ? '' : 'unread'}" onclick="App.openNotification('${n.id}')">
+        <div class="notif-text"><strong>${esc(n.fromName)}</strong> sent you a ${esc(NOTIFICATION_TYPE_LABELS[n.type] || n.type)} for <strong>${esc(n.customerName)}</strong></div>
+        <div class="notif-time">${new Date(n.createdAt).toLocaleString()}</div>
+      </div>`).join('');
+}
+
 function blankDeal() {
   return {
     id: uid('deal'),
@@ -1498,6 +1673,7 @@ function blankDeal() {
     installType: '', // one of INSTALL_TYPES
     clarificationsAssumptions: '',
     exclusions: '', // deal-specific, distinct from a proposal template's boilerplate exclusions
+    proposalAssignedTo: '', // user id — who gets notified when the Proposal is sent
     jobSite: { propertyType: '', accessDifficulty: '', notes: '' },
     sections: DEFAULT_SECTIONS.map(name => ({ id: uid('sec'), name, items: [] })),
     attachments: [],
@@ -1586,6 +1762,7 @@ function blankHandoff(d) {
   HANDOFF_CERTIFICATION_ITEMS.forEach(([key]) => { certification[key] = false; });
   return {
     projectCoordinator: '',
+    assignedTo: '', // user id — who gets notified when this Handoff Sheet is sent
     items,
     briefing: {
       biggestRisk: '', customerExpectation: '', changeOrderRisk: '', opsNotes: '',
@@ -1627,6 +1804,7 @@ function blankEngineering(d) {
   return {
     requestedBy: (d && d.repName) || '',
     requestDate: todayStr(),
+    assignedTo: '', // user id — who gets notified when this Engineering Order is sent
     countyJurisdiction: '',
     materialType: '', texturePattern: '',
     componentsRequired, otherComponents: '',
@@ -1837,6 +2015,13 @@ function evaluateSubmissionChecklist(d) {
 
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// Options for an "Assign To" dropdown — every other user in the app, so a
+// rep can't assign a Proposal/Handoff/Engineering item to themselves.
+function otherUserOptions(selectedId) {
+  return allUsers.filter(u => !currentUser || u.id !== currentUser.id)
+    .map(u => `<option value="${u.id}" ${u.id === selectedId ? 'selected' : ''}>${esc(u.name)}</option>`).join('');
 }
 
 // Resize + compress a photo client-side before storing it, so a multi-MB phone
@@ -2863,6 +3048,57 @@ const App = {
     await saveDeal(d);
   },
 
+  // Drops a notification in the assignee's inbox for the Proposal, Handoff
+  // Sheet, or Engineering Order on this deal — wherever that type's
+  // "assignedTo" currently points.
+  async sendNotification(dealId, type) {
+    const d = deals.find(x => x.id === dealId);
+    if (!d) return;
+    const assigneeId = type === 'proposal' ? d.proposalAssignedTo
+      : type === 'handoff' ? (d.handoff && d.handoff.assignedTo)
+      : (d.engineering && d.engineering.assignedTo);
+    if (!assigneeId) { alert('Pick someone to assign this to first.'); return; }
+    const assignee = allUsers.find(u => u.id === assigneeId);
+    if (!assignee) return;
+    const notification = {
+      id: uid('notif'),
+      recipientId: assignee.id,
+      recipientName: assignee.name,
+      type, // 'proposal' | 'handoff' | 'engineering'
+      dealId: d.id,
+      customerName: d.customerName || 'Untitled deal',
+      fromId: currentUser ? currentUser.id : '',
+      fromName: currentUser ? currentUser.name : '',
+      createdAt: Date.now(),
+      read: false
+    };
+    if (!window.__firebaseSaveNotification) return;
+    const result = await window.__firebaseSaveNotification(notification);
+    alert(result.ok ? `${assignee.name} has been notified.` : 'Failed to send notification — try again. ' + (result.error || ''));
+  },
+
+  async openNotification(notificationId) {
+    const n = notifications.find(x => x.id === notificationId);
+    if (!n) return;
+    closeNotifMenu();
+    if (!n.read) {
+      n.read = true;
+      renderNotifChrome();
+      if (window.__firebaseMarkNotificationRead) await window.__firebaseMarkNotificationRead(notificationId);
+    }
+    currentDealId = n.dealId;
+    if (n.type === 'proposal') {
+      currentView = 'proposal';
+      if (!selectedTemplateId || !allTemplates.some(t => t.id === selectedTemplateId)) {
+        selectedTemplateId = allTemplates.length ? allTemplates[0].id : null;
+      }
+    } else {
+      currentView = 'detail';
+      detailTab = n.type === 'engineering' ? 'engineering' : 'handoff';
+    }
+    render();
+  },
+
   async addAttachmentsToDeal(dealId, fileList) {
     const d = deals.find(x => x.id === dealId);
     if (!d) return;
@@ -3591,6 +3827,15 @@ function renderHandoffTab(d, status) {
     <span class="attach-hint">Prefilled from the deal — fill in the checklist and briefing below before handing off.</span>
   </div>
 
+  <div class="doc-download-row">
+    <select onchange="App.updateHandoffField('${d.id}', ['assignedTo'], this.value)" style="max-width:220px;">
+      <option value="">Assign to...</option>
+      ${otherUserOptions(h.assignedTo)}
+    </select>
+    <button class="btn btn-outline btn-small" onclick="App.sendNotification('${d.id}','handoff')">🔔 Notify</button>
+    <span class="attach-hint">Sends a link to this Handoff Sheet to their inbox.</span>
+  </div>
+
   <div class="panel">
     <h2>Project Info</h2>
     <div class="field-grid">
@@ -3695,6 +3940,15 @@ function renderEngineeringTab(d) {
   <div class="doc-download-row">
     <button class="btn btn-primary" onclick="App.downloadEngineeringDocx('${d.id}')">Download as Word (.docx)</button>
     <span class="attach-hint">Prefilled from the deal — any sales rep can fill this in and send it to Engineering, no approval needed.</span>
+  </div>
+
+  <div class="doc-download-row">
+    <select onchange="App.updateEngineeringField('${d.id}', ['assignedTo'], this.value)" style="max-width:220px;">
+      <option value="">Assign to...</option>
+      ${otherUserOptions(e.assignedTo)}
+    </select>
+    <button class="btn btn-outline btn-small" onclick="App.sendNotification('${d.id}','engineering')">🔔 Notify</button>
+    <span class="attach-hint">Sends a link to this Engineering Order to their inbox.</span>
   </div>
 
   <div class="panel">
@@ -4132,6 +4386,14 @@ function renderProposal() {
           <div><label class="field-label">Template</label>
             <select id="proposal-template-select" onchange="App.setProposalTemplate(this.value)">${templateOptions}</select></div>
         </div>`}
+    <div class="doc-download-row" style="margin-top:14px;">
+      <select onchange="App.updateDealField('${d.id}','proposalAssignedTo', this.value)" style="max-width:220px;">
+        <option value="">Assign to...</option>
+        ${otherUserOptions(d.proposalAssignedTo)}
+      </select>
+      <button class="btn btn-outline btn-small" onclick="App.sendNotification('${d.id}','proposal')">🔔 Notify</button>
+      <span class="attach-hint">Sends a link to this Proposal to their inbox.</span>
+    </div>
   </div>
 
   <div class="panel">
