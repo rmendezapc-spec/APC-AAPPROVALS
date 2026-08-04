@@ -1236,6 +1236,70 @@ const PROPERTY_TYPES = ['Single-Family','Multi-Family','New Construction','Remod
 const ACCESS_OPTIONS = ['Easy — full access','Moderate — some restrictions','Difficult — tight / crane needed'];
 const DEFAULT_SECTIONS = ['General Requirements','Labor & Installation','Materials & Products','Mobilization'];
 
+// Per-linear-foot install-only pricing for the Material Calculator. Rail
+// systems are taken off by rail count; every other style is a stacked-panel
+// fence taken off by height — see renderMaterialCalculator's "Estimation
+// Methodology" panel for the formulas.
+const MATERIAL_CALC_PRODUCTS = [
+  { key: 'woodcrete-rail', name: 'Woodcrete Rail', kind: 'rail', styles: [
+    { key: '2rail', label: '2 Rail System', pricePerLF: 39.95, rails: 2 },
+    { key: '3rail', label: '3 Rail System', pricePerLF: 49.95, rails: 3 },
+    { key: '4rail', label: '4 Rail System', pricePerLF: 59.95, rails: 4 },
+    { key: '4railslat', label: '4 Rail Slat Fence', pricePerLF: 52.00, rails: 4 },
+    { key: '7railslat', label: '7 Rail Slat Fence', pricePerLF: 65.00, rails: 7 },
+  ]},
+  { key: 'smoothstone', name: 'Smoothstone', kind: 'panel', styles: [
+    { key: 'h5', label: '5 foot high fence', pricePerLF: 50, height: 5 },
+    { key: 'h6', label: '6 foot high fence', pricePerLF: 55, height: 6 },
+    { key: 'h7', label: '7 foot high fence', pricePerLF: 75, height: 7 },
+    { key: 'h8', label: '8 foot high fence', pricePerLF: 85, height: 8 },
+    { key: 'h9', label: '9 foot high fence', pricePerLF: 95, height: 9 },
+    { key: 'h10', label: '10 foot high fence', pricePerLF: 105, height: 10 },
+  ]},
+  { key: 'chiselstone', name: 'Chiselstone', kind: 'panel', styles: [
+    { key: 'h4', label: '4 foot high fence', pricePerLF: 40, height: 4 },
+    { key: 'h5', label: '5 foot high fence', pricePerLF: 50, height: 5 },
+    { key: 'h6', label: '6 foot high fence', pricePerLF: 55, height: 6 },
+    { key: 'h7', label: '7 foot high fence', pricePerLF: 75, height: 7 },
+    { key: 'h8', label: '8 foot high fence', pricePerLF: 85, height: 8 },
+    { key: 'h9', label: '9 foot high fence', pricePerLF: 95, height: 9 },
+    { key: 'h10', label: '10 foot high fence', pricePerLF: 105, height: 10 },
+    { key: 'h11', label: '11 foot high fence', pricePerLF: 115, height: 11 },
+    { key: 'h12', label: '12 foot high fence', pricePerLF: 125, height: 12 },
+    { key: 'h13', label: '13 foot high fence', pricePerLF: 135, height: 13 },
+  ]},
+  { key: 'woodcrete', name: 'Woodcrete', kind: 'panel', styles: [
+    { key: 'h4', label: '4 foot high fence', pricePerLF: 45, height: 4 },
+    { key: 'h5', label: '5 foot high fence', pricePerLF: 50, height: 5 },
+    { key: 'h6', label: '6 foot high fence', pricePerLF: 55, height: 6 },
+    { key: 'h7', label: '7 foot high fence', pricePerLF: 75, height: 7 },
+    { key: 'h8', label: '8 foot high fence', pricePerLF: 85, height: 8 },
+    { key: 'h9', label: '9 foot high fence', pricePerLF: 95, height: 9 },
+    { key: 'h10', label: '10 foot high fence', pricePerLF: 105, height: 10 },
+    { key: 'h11', label: '11 foot high fence', pricePerLF: 115, height: 11 },
+    { key: 'h12', label: '12 foot high fence', pricePerLF: 125, height: 12 },
+  ]},
+  { key: 'rusticbrick', name: 'Rusticbrick', kind: 'panel', styles: [
+    { key: 'h5', label: '5 foot high fence', pricePerLF: 50, height: 5 },
+    { key: 'h6', label: '6 foot high fence', pricePerLF: 55, height: 6 },
+    { key: 'h7', label: '7 foot high fence', pricePerLF: 75, height: 7 },
+    { key: 'h8', label: '8 foot high fence', pricePerLF: 85, height: 8 },
+    { key: 'h9', label: '9 foot high fence', pricePerLF: 95, height: 9 },
+    { key: 'h10', label: '10 foot high fence', pricePerLF: 105, height: 10 },
+  ]},
+  { key: 'blockcrete', name: 'Blockcrete', kind: 'panel', styles: [
+    { key: 'h2', label: '2 foot high fence', pricePerLF: 40, height: 2 },
+    { key: 'h3', label: '3 foot high fence', pricePerLF: 45, height: 3 },
+    { key: 'h4', label: '4 foot high fence', pricePerLF: 50, height: 4 },
+    { key: 'h5', label: '5 foot high fence', pricePerLF: 60, height: 5 },
+    { key: 'h6', label: '6 foot high fence', pricePerLF: 65, height: 6 },
+    { key: 'h7', label: '7 foot high fence', pricePerLF: 85, height: 7 },
+    { key: 'h8', label: '8 foot high fence', pricePerLF: 95, height: 8 },
+    { key: 'h9', label: '9 foot high fence', pricePerLF: 105, height: 9 },
+    { key: 'h10', label: '10 foot high fence', pricePerLF: 115, height: 10 },
+  ]},
+];
+
 let deals = [];
 let allTemplates = [];
 let selectedTemplateId = null;
@@ -1246,6 +1310,7 @@ let currentDealId = null;
 let detailTab = 'overview'; // 'overview' | 'handoff' | 'engineering', for the deal detail view's tab bar
 let storageError = false;
 let storageErrorDetail = '';
+let materialCalcState = { productKey: MATERIAL_CALC_PRODUCTS[0].key, styleKey: MATERIAL_CALC_PRODUCTS[0].styles[0].key, linearFeet: '' };
 
 function uid(prefix) { return prefix + '_' + Date.now() + '_' + Math.floor(Math.random()*10000); }
 
@@ -1366,7 +1431,7 @@ function blankDeal() {
 }
 
 function blankItem() {
-  return { id: uid('item'), desc: '', qty: 1, unit: 'each', unitCost: 0, costType: 'Material', markupPercent: 25 };
+  return { id: uid('item'), desc: '', qty: 1, unit: 'each', unitCost: 0, costType: 'Material', costTypeOther: '', markupPercent: 25 };
 }
 
 // Sets a nested value by path (array of keys/indices), creating no
@@ -2151,6 +2216,21 @@ const App = {
     selectedTemplateId = templateId;
   },
 
+  goMaterialCalculator(dealId) {
+    currentDealId = dealId;
+    currentView = 'material-calc';
+    render();
+  },
+
+  setMaterialCalcField(field, value) {
+    materialCalcState[field] = value;
+    if (field === 'productKey') {
+      const product = MATERIAL_CALC_PRODUCTS.find(p => p.key === value);
+      materialCalcState.styleKey = product.styles[0].key;
+    }
+    render();
+  },
+
   async downloadProposalDocx(dealId) {
     const d = deals.find(x => x.id === dealId);
     const template = allTemplates.find(t => t.id === selectedTemplateId);
@@ -2289,6 +2369,18 @@ const App = {
     const s = draftDeal.sections.find(s => s.id === secId);
     const i = s && s.items.find(i => i.id === itemId);
     if (i) i[field] = value;
+  },
+
+  // Separate from updateItemText because picking 'Other' needs to reveal a
+  // free-text input right away, which requires a re-render.
+  updateItemCostType(secId, itemId, value) {
+    const s = draftDeal.sections.find(s => s.id === secId);
+    const i = s && s.items.find(i => i.id === itemId);
+    if (i) {
+      i.costType = value;
+      if (value !== 'Other') i.costTypeOther = '';
+    }
+    render();
   },
 
   updateItemNumeric(secId, itemId, field, value) {
@@ -2773,6 +2865,7 @@ function render() {
   else if (currentView === 'change-password') main.innerHTML = renderChangePassword();
   else if (currentView === 'templates') main.innerHTML = renderTemplates();
   else if (currentView === 'proposal') main.innerHTML = renderProposal();
+  else if (currentView === 'material-calc') main.innerHTML = renderMaterialCalculator();
   main.querySelectorAll('textarea.notes-autogrow').forEach(autoGrowTextarea);
 }
 
@@ -2834,9 +2927,11 @@ function renderForm() {
         <td><input type="number" step="any" value="${item.unitCost}"
             oninput="App.updateItemNumeric('${sec.id}','${item.id}','unitCost', this.value)"></td>
         <td>
-          <select onchange="App.updateItemText('${sec.id}','${item.id}','costType', this.value)">
+          <select onchange="App.updateItemCostType('${sec.id}','${item.id}', this.value)">
             ${COST_TYPES.map(t => `<option value="${t}" ${t===item.costType?'selected':''}>${t}</option>`).join('')}
           </select>
+          ${item.costType === 'Other' ? `<input type="text" style="margin-top:4px;" value="${esc(item.costTypeOther || '')}" placeholder="Specify cost type"
+              oninput="App.updateItemText('${sec.id}','${item.id}','costTypeOther', this.value)">` : ''}
         </td>
         <td><input id="markupinput-${item.id}" type="number" step="any" value="${item.markupPercent}"
             oninput="App.updateItemNumeric('${sec.id}','${item.id}','markupPercent', this.value)"></td>
@@ -3013,7 +3108,7 @@ function renderDetail() {
         <td class="num">${item.qty}</td>
         <td>${esc(item.unit)}</td>
         <td class="num">${money(item.unitCost)}</td>
-        <td>${esc(item.costType)}</td>
+        <td>${esc(item.costType === 'Other' && item.costTypeOther ? item.costTypeOther : item.costType)}</td>
         <td class="num">${Number(item.markupPercent)||0}%</td>
         <td class="num">${money(c.unitPrice)}</td>
         <td class="num">${money(c.builderCost)}</td>
@@ -3162,6 +3257,7 @@ function renderDetail() {
       <button class="btn btn-outline btn-small" onclick="App.goProposal('${d.id}')">Generate Proposal</button>
       <button class="btn btn-outline btn-small" onclick="App.setDetailTab('handoff')">Handoff Sheet</button>
       <button class="btn btn-outline btn-small" onclick="App.setDetailTab('engineering')">Engineering Order</button>
+      <button class="btn btn-outline btn-small" onclick="App.goMaterialCalculator('${d.id}')">Material Calculator</button>
       ${status === 'rejected' ? `<button class="btn btn-outline btn-small" onclick="App.editDeal('${d.id}')">Edit</button>` : ''}
     </div>
   </div>
@@ -3565,6 +3661,85 @@ function renderTemplates() {
     <div class="form-actions">
       <button class="btn btn-primary" onclick="App.addTemplate()">Add Template</button>
     </div>
+  </div>`;
+}
+
+// Fence-product takeoff calculator: rail systems (Woodcrete Rail) are taken
+// off by rail count, every other style is a stacked precast panel fence
+// taken off by height. See the on-page "Estimation Methodology" panel for
+// the formulas themselves.
+function renderMaterialCalculator() {
+  const d = deals.find(x => x.id === currentDealId);
+  if (!d) return `<div class="empty-state">Deal not found.<div class="back-link" onclick="App.goList()">&larr; Back</div></div>`;
+
+  const product = MATERIAL_CALC_PRODUCTS.find(p => p.key === materialCalcState.productKey) || MATERIAL_CALC_PRODUCTS[0];
+  const style = product.styles.find(s => s.key === materialCalcState.styleKey) || product.styles[0];
+  const lf = Number(materialCalcState.linearFeet) || 0;
+
+  const productOptions = MATERIAL_CALC_PRODUCTS.map(p => `<option value="${p.key}" ${p.key===product.key?'selected':''}>${esc(p.name)}</option>`).join('');
+  const styleOptions = product.styles.map(s => `<option value="${s.key}" ${s.key===style.key?'selected':''}>${esc(s.label)}</option>`).join('');
+
+  let resultsHtml;
+  if (lf > 0) {
+    const totalPrice = lf * style.pricePerLF;
+    const posts = Math.ceil(lf / (product.kind === 'rail' ? 8 : 5)) + 1;
+    resultsHtml = `
+      <div class="stat"><div class="stat-label">Unit Price</div><div class="stat-value">${money(style.pricePerLF)}/LF</div></div>
+      <div class="stat"><div class="stat-label">Total Price</div><div class="stat-value">${money(totalPrice)}</div></div>
+      <div class="stat"><div class="stat-label">Posts</div><div class="stat-value">${posts}</div></div>
+      ${product.kind === 'rail'
+        ? `<div class="stat"><div class="stat-label">Rails</div><div class="stat-value">${posts * style.rails}</div></div>`
+        : `<div class="stat"><div class="stat-label">Panels</div><div class="stat-value">${posts * style.height}</div></div>
+           <div class="stat"><div class="stat-label">Panel Caps</div><div class="stat-value">${posts}</div></div>`}
+      <div class="stat"><div class="stat-label">Post Caps</div><div class="stat-value">${posts}</div></div>`;
+  } else {
+    resultsHtml = `<div class="attach-hint">Enter linear footage above to calculate pricing and material takeoff.</div>`;
+  }
+
+  const referenceHtml = MATERIAL_CALC_PRODUCTS.map(p => `
+    <div class="section-block">
+      <div class="section-head"><strong>${esc(p.name)}</strong></div>
+      <div class="table-scroll">
+      <table class="items">
+        <thead><tr><th class="col-desc">Style</th><th>Price / LF</th></tr></thead>
+        <tbody>${p.styles.map(s => `<tr><td class="col-desc">${esc(s.label)}</td><td class="num">${money(s.pricePerLF)}</td></tr>`).join('')}</tbody>
+      </table>
+      </div>
+    </div>`).join('');
+
+  return `
+  <div class="back-link" onclick="App.viewDeal('${d.id}')">&larr; Back to deal</div>
+
+  <div class="panel">
+    <h2>Material Calculator</h2>
+    <p class="attach-hint" style="margin-top:-6px;">All pricing below is per linear foot, install only. Pick a fence style and enter the linear footage to get a unit price, total price, and material takeoff.</p>
+    <div class="field-grid">
+      <div><label class="field-label">Fence Product</label>
+        <select onchange="App.setMaterialCalcField('productKey', this.value)">${productOptions}</select></div>
+      <div><label class="field-label">Style / Height</label>
+        <select onchange="App.setMaterialCalcField('styleKey', this.value)">${styleOptions}</select></div>
+      <div><label class="field-label">Linear Footage (LF)</label>
+        <input type="number" step="any" min="0" value="${esc(materialCalcState.linearFeet)}" placeholder="0"
+            oninput="App.setMaterialCalcField('linearFeet', this.value)"></div>
+    </div>
+
+    <div class="totals-bar">
+      ${resultsHtml}
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Estimation Methodology</h2>
+    <ul style="margin:0; padding-left:18px; line-height:1.7;">
+      <li><strong>Woodcrete Rail systems:</strong> Posts = ROUNDUP(LF &divide; 8) + 1 spare post. Rails = Posts &times; the rail count of the selected system (2, 3, 4, or 7). Post caps = number of posts.</li>
+      <li><strong>All other styles</strong> (Smoothstone, Chiselstone, Woodcrete, Rusticbrick, Blockcrete): Posts = ROUNDUP(LF &divide; 5) + 1 spare post. Panels = Posts &times; fence height (ft). Panel caps and post caps both equal the number of posts.</li>
+      <li>All prices are per linear foot, install only. Use the total price and takeoff counts above to build out the line items on the estimate.</li>
+    </ul>
+  </div>
+
+  <div class="panel">
+    <h2>Pricing Reference</h2>
+    ${referenceHtml}
   </div>`;
 }
 
