@@ -706,6 +706,13 @@
     margin-bottom: 14px;
   }
 
+  @media print {
+    .brand-strip, header.topbar, .no-print { display: none !important; }
+    body { background: #fff; }
+    main { max-width: 100%; padding: 0; }
+    .panel { box-shadow: none; border: none; }
+  }
+
   /* Real device width drives layout directly — no manual override needed. */
   @media (max-width: 640px) {
     .approval-grid { grid-template-columns: 1fr; }
@@ -1467,6 +1474,7 @@ let currentView = 'list';
 let currentFilter = 'all';
 let draftDeal = null;
 let currentDealId = null;
+let currentEstimateId = null; // which saved Material Estimate is showing in the print/open view
 let detailTab = 'overview'; // 'overview' | 'handoff' | 'engineering', for the deal detail view's tab bar
 let storageError = false;
 let storageErrorDetail = '';
@@ -1474,7 +1482,7 @@ let storageErrorDetail = '';
 // { title, missing: [...] } per incomplete CFI SOP checklist category, or
 // null once the form is clean or hasn't been submitted yet this session.
 let submissionChecklistErrors = null;
-let materialCalcState = { productKey: MATERIAL_CALC_PRODUCTS[0].key, styleKey: MATERIAL_CALC_PRODUCTS[0].styles[0].key, linearFeet: '', postTypeRows: [] };
+let materialCalcState = { productKey: MATERIAL_CALC_PRODUCTS[0].key, styleKey: MATERIAL_CALC_PRODUCTS[0].styles[0].key, linearFeet: '', postTypeRows: [], assignedTo: '' };
 let editingMaterialPricing = false;
 let materialPricingDraft = null;
 
@@ -1507,6 +1515,16 @@ let openRejectBoxFor = null; // which approver's reject-reason box is open on th
 
 // Save a single deal document, used after every mutation (submit,
 // approve/reject, etc.) — only the changed deal is written, not the whole list.
+// Logs that a Proposal/Handoff Sheet/Engineering Order was (re)generated, so
+// the Overview tab's Documents panel can show "last generated" info without
+// storing the actual file — Download always rebuilds it fresh from the
+// deal's current data.
+async function recordDocumentGenerated(d, type) {
+  d.documents = d.documents || { proposal: null, handoff: null, engineering: null };
+  d.documents[type] = { generatedAt: Date.now(), generatedBy: currentUser ? currentUser.name : '' };
+  await saveDeal(d);
+}
+
 async function saveDeal(deal) {
   try {
     const result = window.__firebaseSaveDeal
@@ -1607,7 +1625,7 @@ function subscribeToMaterialPricingOnce() {
   });
 }
 
-const NOTIFICATION_TYPE_LABELS = { proposal: 'Proposal', handoff: 'Handoff Sheet', engineering: 'Engineering Order' };
+const NOTIFICATION_TYPE_LABELS = { proposal: 'Proposal', handoff: 'Handoff Sheet', engineering: 'Engineering Order', 'material-estimate': 'Material Estimate' };
 
 // Live inbox for the logged-in user — scoped by recipientId at the query
 // level (see window.__firebaseSubscribeNotifications) rather than filtered
@@ -1674,6 +1692,15 @@ function blankDeal() {
     clarificationsAssumptions: '',
     exclusions: '', // deal-specific, distinct from a proposal template's boilerplate exclusions
     proposalAssignedTo: '', // user id — who gets notified when the Proposal is sent
+    // Last-generated record per document type — { generatedAt, generatedBy } or
+    // null until first generated. The docx itself isn't stored (Firestore's
+    // 1MB/doc cap already rules out storing photos-as-attachments beyond
+    // compressed JPEGs — see the attachments feature — so a generated Word
+    // doc has even less room); "Download" always regenerates fresh from the
+    // deal's current data, which is fine since these are effectively live
+    // documents, not point-in-time snapshots.
+    documents: { proposal: null, handoff: null, engineering: null },
+    materialEstimates: [], // saved Material Calculator snapshots — see blankMaterialEstimate()
     jobSite: { propertyType: '', accessDifficulty: '', notes: '' },
     sections: DEFAULT_SECTIONS.map(name => ({ id: uid('sec'), name, items: [] })),
     attachments: [],
@@ -2022,6 +2049,19 @@ function esc(s) {
 function otherUserOptions(selectedId) {
   return allUsers.filter(u => !currentUser || u.id !== currentUser.id)
     .map(u => `<option value="${u.id}" ${u.id === selectedId ? 'selected' : ''}>${esc(u.name)}</option>`).join('');
+}
+
+function assigneeName(userId) {
+  const u = userId ? allUsers.find(x => x.id === userId) : null;
+  return u ? u.name : '—';
+}
+
+// One line of "Not yet generated" / "Generated <date> by <name> · Assigned to <name>"
+// for the Overview tab's Documents panel.
+function documentStatusLine(record, assignedTo) {
+  if (!record) return 'Not yet generated';
+  const assignedPart = assignedTo ? ` · Assigned to ${esc(assigneeName(assignedTo))}` : '';
+  return `Generated ${esc(new Date(record.generatedAt).toLocaleDateString())} by ${esc(record.generatedBy || '—')}${assignedPart}`;
 }
 
 // Resize + compress a photo client-side before storing it, so a multi-MB phone
@@ -2660,6 +2700,7 @@ const App = {
       const docxLib = await import('https://unpkg.com/docx@9.7.1/dist/index.mjs');
       const blob = await buildProposalDocx(docxLib, d, template);
       downloadBlob(blob, (d.customerName || 'proposal').replace(/[^\w\- ]+/g, '').trim() + ' - Proposal.docx');
+      await recordDocumentGenerated(d, 'proposal');
     } catch (e) {
       console.error('Proposal generation failed:', e);
       alert('Could not generate the Word document — check your connection and try again.');
@@ -3051,12 +3092,19 @@ const App = {
   // Drops a notification in the assignee's inbox for the Proposal, Handoff
   // Sheet, or Engineering Order on this deal — wherever that type's
   // "assignedTo" currently points.
-  async sendNotification(dealId, type) {
+  // estimateId is only used for type 'material-estimate', which can have
+  // several saved entries per deal, each independently assignable.
+  async sendNotification(dealId, type, estimateId) {
     const d = deals.find(x => x.id === dealId);
     if (!d) return;
-    const assigneeId = type === 'proposal' ? d.proposalAssignedTo
-      : type === 'handoff' ? (d.handoff && d.handoff.assignedTo)
-      : (d.engineering && d.engineering.assignedTo);
+    let assigneeId;
+    if (type === 'proposal') assigneeId = d.proposalAssignedTo;
+    else if (type === 'handoff') assigneeId = d.handoff && d.handoff.assignedTo;
+    else if (type === 'engineering') assigneeId = d.engineering && d.engineering.assignedTo;
+    else if (type === 'material-estimate') {
+      const est = (d.materialEstimates || []).find(e => e.id === estimateId);
+      assigneeId = est && est.assignedTo;
+    }
     if (!assigneeId) { alert('Pick someone to assign this to first.'); return; }
     const assignee = allUsers.find(u => u.id === assigneeId);
     if (!assignee) return;
@@ -3064,8 +3112,9 @@ const App = {
       id: uid('notif'),
       recipientId: assignee.id,
       recipientName: assignee.name,
-      type, // 'proposal' | 'handoff' | 'engineering'
+      type, // 'proposal' | 'handoff' | 'engineering' | 'material-estimate'
       dealId: d.id,
+      estimateId: estimateId || null,
       customerName: d.customerName || 'Untitled deal',
       fromId: currentUser ? currentUser.id : '',
       fromName: currentUser ? currentUser.name : '',
@@ -3092,10 +3141,69 @@ const App = {
       if (!selectedTemplateId || !allTemplates.some(t => t.id === selectedTemplateId)) {
         selectedTemplateId = allTemplates.length ? allTemplates[0].id : null;
       }
+    } else if (n.type === 'material-estimate') {
+      currentView = 'material-estimate-view';
+      currentEstimateId = n.estimateId;
     } else {
       currentView = 'detail';
       detailTab = n.type === 'engineering' ? 'engineering' : 'handoff';
     }
+    render();
+  },
+
+  saveMaterialEstimate(dealId) {
+    const d = deals.find(x => x.id === dealId);
+    if (!d) return;
+    const product = MATERIAL_CALC_PRODUCTS.find(p => p.key === materialCalcState.productKey) || MATERIAL_CALC_PRODUCTS[0];
+    const style = product.styles.find(s => s.key === materialCalcState.styleKey) || product.styles[0];
+    const lf = Number(materialCalcState.linearFeet) || 0;
+    if (lf <= 0) { alert('Enter linear footage before saving an estimate.'); return; }
+    const posts = computeMaterialCalcPosts();
+    d.materialEstimates = d.materialEstimates || [];
+    d.materialEstimates.push({
+      id: uid('estimate'),
+      savedAt: Date.now(),
+      savedBy: currentUser ? currentUser.name : '',
+      productName: product.name,
+      styleLabel: style.label,
+      kind: product.kind,
+      linearFeet: lf,
+      unitPrice: style.pricePerLF,
+      totalPrice: lf * style.pricePerLF,
+      posts,
+      secondaryLabel: product.kind === 'rail' ? 'Rails' : 'Panels',
+      secondaryValue: product.kind === 'rail' ? posts * style.rails : posts * style.height,
+      hasPanelCaps: !!product.hasPanelCaps,
+      hasPostCaps: !!product.hasPostCaps,
+      postTypeRows: (materialCalcState.postTypeRows || []).map(r => ({ type: r.type, qty: Number(r.qty) || 0 })),
+      assignedTo: '',
+      assignedToName: ''
+    });
+    saveDeal(d);
+    this.viewDeal(dealId);
+  },
+
+  removeMaterialEstimate(dealId, estimateId) {
+    const d = deals.find(x => x.id === dealId);
+    if (!d) return;
+    d.materialEstimates = (d.materialEstimates || []).filter(e => e.id !== estimateId);
+    saveDeal(d);
+  },
+
+  setMaterialEstimateAssignee(dealId, estimateId, userId) {
+    const d = deals.find(x => x.id === dealId);
+    const est = d && (d.materialEstimates || []).find(e => e.id === estimateId);
+    if (!est) return;
+    const assignee = allUsers.find(u => u.id === userId);
+    est.assignedTo = assignee ? assignee.id : '';
+    est.assignedToName = assignee ? assignee.name : '';
+    saveDeal(d);
+  },
+
+  openMaterialEstimate(dealId, estimateId) {
+    currentDealId = dealId;
+    currentEstimateId = estimateId;
+    currentView = 'material-estimate-view';
     render();
   },
 
@@ -3172,6 +3280,7 @@ const App = {
       const docxLib = await import('https://unpkg.com/docx@9.7.1/dist/index.mjs');
       const blob = await buildHandoffDocx(docxLib, d);
       downloadBlob(blob, (d.customerName || 'handoff').replace(/[^\w\- ]+/g, '').trim() + ' - Handoff Sheet.docx');
+      await recordDocumentGenerated(d, 'handoff');
     } catch (e) {
       alert('Could not generate the Word document — check your connection and try again.');
     }
@@ -3184,6 +3293,7 @@ const App = {
       const docxLib = await import('https://unpkg.com/docx@9.7.1/dist/index.mjs');
       const blob = await buildEngineeringDocx(docxLib, d);
       downloadBlob(blob, (d.customerName || 'engineering').replace(/[^\w\- ]+/g, '').trim() + ' - Engineering Order.docx');
+      await recordDocumentGenerated(d, 'engineering');
     } catch (e) {
       alert('Could not generate the Word document — check your connection and try again.');
     }
@@ -3336,6 +3446,7 @@ function render() {
   else if (currentView === 'templates') main.innerHTML = renderTemplates();
   else if (currentView === 'proposal') main.innerHTML = renderProposal();
   else if (currentView === 'material-calc') main.innerHTML = renderMaterialCalculator();
+  else if (currentView === 'material-estimate-view') main.innerHTML = renderMaterialEstimateView();
   main.querySelectorAll('textarea.notes-autogrow').forEach(autoGrowTextarea);
 }
 
@@ -3715,6 +3826,43 @@ function renderDetail() {
       <div class="stat"><div class="stat-label">Margin %</div><div class="stat-value">${dealMargin(d).toFixed(1)}%</div></div>
       <div class="stat"><div class="stat-label">Profit $</div><div class="stat-value">${money(dealProfit(d))}</div></div>
     </div>
+  </div>
+
+  <div class="panel">
+    <h2>Documents</h2>
+    <p class="attach-hint" style="margin-top:-6px;">Each is generated fresh from the deal's current data — download from its own tab/screen above.</p>
+    <div class="job-site-summary">
+      <div class="kv"><div class="k">Proposal</div><div class="v">${documentStatusLine(d.documents && d.documents.proposal, d.proposalAssignedTo)}</div></div>
+      <div class="kv"><div class="k">Handoff Sheet</div><div class="v">${documentStatusLine(d.documents && d.documents.handoff, d.handoff && d.handoff.assignedTo)}</div></div>
+      <div class="kv"><div class="k">Engineering Order</div><div class="v">${documentStatusLine(d.documents && d.documents.engineering, d.engineering && d.engineering.assignedTo)}</div></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Material Estimates</h2>
+    ${(d.materialEstimates && d.materialEstimates.length) ? d.materialEstimates.map(est => `
+      <div class="section-block">
+        <div class="section-head">
+          <strong>${esc(est.productName)} — ${esc(est.styleLabel)} (${est.linearFeet} LF)</strong>
+          <button class="btn btn-danger btn-small" onclick="App.removeMaterialEstimate('${d.id}','${est.id}')">✕</button>
+        </div>
+        <div style="padding:12px;">
+          <div class="totals-bar" style="margin-bottom:12px;">
+            <div class="stat"><div class="stat-label">Total Price</div><div class="stat-value">${money(est.totalPrice)}</div></div>
+            <div class="stat"><div class="stat-label">Posts</div><div class="stat-value">${est.posts}</div></div>
+            <div class="stat"><div class="stat-label">${esc(est.secondaryLabel)}</div><div class="stat-value">${est.secondaryValue}</div></div>
+          </div>
+          <p class="attach-hint" style="margin:0 0 10px;">Saved ${esc(new Date(est.savedAt).toLocaleDateString())} by ${esc(est.savedBy || '—')}</p>
+          <div class="doc-download-row">
+            <select onchange="App.setMaterialEstimateAssignee('${d.id}','${est.id}', this.value)" style="max-width:220px;">
+              <option value="">Assign to...</option>
+              ${otherUserOptions(est.assignedTo)}
+            </select>
+            <button class="btn btn-outline btn-small" onclick="App.sendNotification('${d.id}','material-estimate','${est.id}')">🔔 Notify</button>
+            <button class="btn btn-outline btn-small" onclick="App.openMaterialEstimate('${d.id}','${est.id}')">Open / Print</button>
+          </div>
+        </div>
+      </div>`).join('') : `<div class="attach-hint">No material estimates saved yet — use the Material Calculator to add one.</div>`}
   </div>
 
   <div class="panel">
@@ -4327,6 +4475,11 @@ function renderMaterialCalculator() {
     <div class="totals-bar" id="calc-results">
       ${materialCalcResultsHtml()}
     </div>
+
+    <div class="doc-download-row" style="margin-top:14px;">
+      <button class="btn btn-primary btn-small" onclick="App.saveMaterialEstimate('${d.id}')">💾 Save Estimate to Deal</button>
+      <span class="attach-hint">Saves this calculation to the deal page, where it can be assigned, opened, and printed.</span>
+    </div>
   </div>
 
   <div class="panel">
@@ -4348,6 +4501,59 @@ function renderMaterialCalculator() {
     <h2>Pricing Reference</h2>
     ${materialCalcPricingReferenceHtml()}
   </div>`;
+}
+
+// A saved Material Estimate has no Word doc behind it (unlike Proposal/
+// Handoff/Engineering), so this is its "document" — a clean, standalone
+// page whoever it's assigned to can open, print, or Save as PDF via the
+// browser's native print dialog. Everything with class="no-print" is
+// hidden by the @media print rule so only the estimate itself prints.
+function renderMaterialEstimateView() {
+  const d = deals.find(x => x.id === currentDealId);
+  const est = d && (d.materialEstimates || []).find(e => e.id === currentEstimateId);
+  if (!d || !est) return `<div class="empty-state">Estimate not found.<div class="back-link no-print" onclick="App.goList()">&larr; Back</div></div>`;
+
+  const capsHtml = [
+    est.hasPanelCaps ? `<div class="stat"><div class="stat-label">Panel Caps</div><div class="stat-value">${est.posts}</div></div>` : '',
+    est.hasPostCaps ? `<div class="stat"><div class="stat-label">Post Caps</div><div class="stat-value">${est.posts}</div></div>` : ''
+  ].join('');
+
+  const postRowsHtml = (est.postTypeRows || []).filter(r => r.qty > 0).map(r =>
+    `<tr><td class="col-desc">${esc(r.type)}</td><td class="num">${r.qty}</td></tr>`).join('');
+
+  return `
+  <div class="back-link no-print" onclick="App.viewDeal('${d.id}')">&larr; Back to deal</div>
+
+  <div class="panel">
+    <div class="no-print" style="display:flex; justify-content:flex-end; margin-bottom:10px;">
+      <button class="btn btn-primary btn-small" onclick="window.print()">🖨️ Print / Save as PDF</button>
+    </div>
+    <h2>Material Estimate — ${esc(d.customerName || 'Untitled deal')}</h2>
+    <p class="attach-hint" style="margin-top:-6px;">Saved ${new Date(est.savedAt).toLocaleString()} by ${esc(est.savedBy || '—')}${est.assignedToName ? ' · Assigned to ' + esc(est.assignedToName) : ''}</p>
+    <div class="job-site-summary">
+      <div class="kv"><div class="k">Fence Product</div><div class="v">${esc(est.productName)}</div></div>
+      <div class="kv"><div class="k">Style / Height</div><div class="v">${esc(est.styleLabel)}</div></div>
+      <div class="kv"><div class="k">Linear Footage</div><div class="v">${est.linearFeet} LF</div></div>
+    </div>
+    <div class="totals-bar" style="margin-top:14px;">
+      <div class="stat"><div class="stat-label">Unit Price</div><div class="stat-value">${money(est.unitPrice)}/LF</div></div>
+      <div class="stat"><div class="stat-label">Total Price</div><div class="stat-value">${money(est.totalPrice)}</div></div>
+      <div class="stat"><div class="stat-label">Posts</div><div class="stat-value">${est.posts}</div></div>
+      <div class="stat"><div class="stat-label">${esc(est.secondaryLabel)}</div><div class="stat-value">${est.secondaryValue}</div></div>
+      ${capsHtml}
+    </div>
+  </div>
+
+  ${postRowsHtml ? `
+  <div class="panel">
+    <h2>Post Type Breakdown</h2>
+    <div class="table-scroll">
+    <table class="items">
+      <thead><tr><th class="col-desc">Post Type</th><th>Quantity</th></tr></thead>
+      <tbody>${postRowsHtml}</tbody>
+    </table>
+    </div>
+  </div>` : ''}`;
 }
 
 function renderProposal() {
