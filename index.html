@@ -847,6 +847,7 @@
   const dealsCollRef = collection(db, 'deals');
   const usersCollRef = collection(db, 'users');
   const templatesCollRef = collection(db, 'templates');
+  const settingsCollRef = collection(db, 'settings');
 
   // Each deal is its own document, keyed by the deal's own id. This avoids the
   // 1MB single-document cap and the "last write wins, whole list" concurrency
@@ -985,6 +986,30 @@
       onData(arr);
     }, (err) => {
       console.error('Firestore listen error (templates):', err);
+      if (onError) onError(err);
+    });
+  };
+
+  // Material Calculator per-LF base prices, editable by admins/approvers
+  // from the calculator's Pricing Reference panel. One shared document —
+  // { [productKey]: { [styleKey]: price } } — same trust model as
+  // everything else here (see the rules-file header comment): the app only
+  // hides the Edit Prices button from non-admins client-side.
+  window.__firebaseSaveMaterialPricing = async function (pricing) {
+    try {
+      await setDoc(doc(settingsCollRef, 'materialPricing'), pricing);
+      return { ok: true };
+    } catch (e) {
+      console.error('Firestore save material pricing failed:', e);
+      return { ok: false, error: (e && e.message) || String(e) };
+    }
+  };
+
+  window.__firebaseSubscribeMaterialPricing = function (onData, onError) {
+    onSnapshot(doc(settingsCollRef, 'materialPricing'), (snap) => {
+      onData(snap.exists() ? snap.data() : null);
+    }, (err) => {
+      console.error('Firestore listen error (material pricing):', err);
       if (onError) onError(err);
     });
   };
@@ -1312,7 +1337,9 @@ let currentDealId = null;
 let detailTab = 'overview'; // 'overview' | 'handoff' | 'engineering', for the deal detail view's tab bar
 let storageError = false;
 let storageErrorDetail = '';
-let materialCalcState = { productKey: MATERIAL_CALC_PRODUCTS[0].key, styleKey: MATERIAL_CALC_PRODUCTS[0].styles[0].key, linearFeet: '', postTypes: [] };
+let materialCalcState = { productKey: MATERIAL_CALC_PRODUCTS[0].key, styleKey: MATERIAL_CALC_PRODUCTS[0].styles[0].key, linearFeet: '', postTypeRows: [] };
+let editingMaterialPricing = false;
+let materialPricingDraft = null;
 
 function uid(prefix) { return prefix + '_' + Date.now() + '_' + Math.floor(Math.random()*10000); }
 
@@ -1400,6 +1427,40 @@ function subscribeToTemplatesOnce() {
     window.__firebaseSubscribeTemplates((templates) => {
       allTemplates = templates;
       if (currentView === 'proposal' || currentView === 'templates') render();
+      if (!settled) { settled = true; resolve(); }
+    }, () => { if (!settled) { settled = true; resolve(); } });
+  });
+}
+
+// Overlays saved per-LF prices onto MATERIAL_CALC_PRODUCTS's built-in
+// defaults — any style not yet customized just keeps its default price.
+function applyMaterialPricingOverrides(pricing) {
+  if (!pricing) return;
+  MATERIAL_CALC_PRODUCTS.forEach(p => {
+    const overrides = pricing[p.key];
+    if (!overrides) return;
+    p.styles.forEach(s => {
+      if (typeof overrides[s.key] === 'number') s.pricePerLF = overrides[s.key];
+    });
+  });
+}
+
+function currentMaterialPricingMap() {
+  const map = {};
+  MATERIAL_CALC_PRODUCTS.forEach(p => {
+    map[p.key] = {};
+    p.styles.forEach(s => { map[p.key][s.key] = s.pricePerLF; });
+  });
+  return map;
+}
+
+function subscribeToMaterialPricingOnce() {
+  return new Promise((resolve) => {
+    if (!window.__firebaseSubscribeMaterialPricing) { resolve(); return; }
+    let settled = false;
+    window.__firebaseSubscribeMaterialPricing((pricing) => {
+      applyMaterialPricingOverrides(pricing);
+      if (currentView === 'material-calc') render();
       if (!settled) { settled = true; resolve(); }
     }, () => { if (!settled) { settled = true; resolve(); } });
   });
@@ -2230,12 +2291,82 @@ const App = {
       const product = MATERIAL_CALC_PRODUCTS.find(p => p.key === value);
       materialCalcState.styleKey = product.styles[0].key;
     }
+    if (field === 'linearFeet') {
+      // Typed character-by-character — patch just the computed panels
+      // in place instead of a full render(), so the input this came from
+      // is never recreated and never loses focus/cursor mid-keystroke.
+      const posts = computeMaterialCalcPosts();
+      const resultsEl = document.getElementById('calc-results');
+      if (resultsEl) resultsEl.innerHTML = materialCalcResultsHtml();
+      const postEl = document.getElementById('calc-post-breakdown');
+      if (postEl) postEl.innerHTML = materialCalcPostBreakdownHtml(posts);
+    } else {
+      render();
+    }
+  },
+
+  addPostTypeRow() {
+    if (!Array.isArray(materialCalcState.postTypeRows)) materialCalcState.postTypeRows = [];
+    const used = materialCalcState.postTypeRows.map(r => r.type);
+    const next = POST_TYPES.find(pt => !used.includes(pt)) || POST_TYPES[0];
+    materialCalcState.postTypeRows.push({ type: next, qty: 0 });
     render();
   },
 
-  setMaterialCalcPostType(index, value) {
-    materialCalcState.postTypes[index] = value;
+  removePostTypeRow(index) {
+    materialCalcState.postTypeRows.splice(index, 1);
     render();
+  },
+
+  setPostTypeRowType(index, value) {
+    materialCalcState.postTypeRows[index].type = value;
+    render();
+  },
+
+  // Quantity is typed character-by-character too — only patch the tally,
+  // leaving the row (and the input being typed into) untouched.
+  setPostTypeRowQty(index, value) {
+    materialCalcState.postTypeRows[index].qty = value;
+    const tallyEl = document.getElementById('calc-post-tally');
+    if (tallyEl) tallyEl.innerHTML = materialCalcPostTallyHtml(computeMaterialCalcPosts());
+  },
+
+  startEditMaterialPricing() {
+    if (!isAdminUser(currentUser)) return;
+    materialPricingDraft = currentMaterialPricingMap();
+    editingMaterialPricing = true;
+    render();
+  },
+
+  cancelEditMaterialPricing() {
+    editingMaterialPricing = false;
+    materialPricingDraft = null;
+    render();
+  },
+
+  // Fires on blur/Enter (onchange), not per keystroke, so there's no focus
+  // loss to worry about here — no need to patch the DOM in place.
+  setMaterialPriceDraft(productKey, styleKey, value) {
+    if (!materialPricingDraft) return;
+    materialPricingDraft[productKey][styleKey] = Number(value) || 0;
+  },
+
+  async saveMaterialPricing() {
+    if (!isAdminUser(currentUser) || !materialPricingDraft) return;
+    MATERIAL_CALC_PRODUCTS.forEach(p => {
+      p.styles.forEach(s => {
+        const v = materialPricingDraft[p.key] && materialPricingDraft[p.key][s.key];
+        if (typeof v === 'number' && !Number.isNaN(v)) s.pricePerLF = v;
+      });
+    });
+    const pricingToSave = currentMaterialPricingMap();
+    editingMaterialPricing = false;
+    materialPricingDraft = null;
+    render();
+    if (window.__firebaseSaveMaterialPricing) {
+      const result = await window.__firebaseSaveMaterialPricing(pricingToSave);
+      if (!result.ok) alert('Failed to save prices — try again. ' + (result.error || ''));
+    }
   },
 
   async downloadProposalDocx(dealId) {
@@ -3675,64 +3806,111 @@ function renderTemplates() {
 // off by rail count, every other style is a stacked precast panel fence
 // taken off by height. See the on-page "Estimation Methodology" panel for
 // the formulas themselves.
+//
+// The results, post breakdown, and pricing table are each built by their
+// own function (rather than inline in renderMaterialCalculator) so the
+// Linear Footage and post-quantity inputs — typed character-by-character —
+// can patch just their own computed panel via direct DOM updates instead of
+// a full render(), which would recreate the input mid-keystroke and drop
+// focus after every character.
+function computeMaterialCalcPosts() {
+  const product = MATERIAL_CALC_PRODUCTS.find(p => p.key === materialCalcState.productKey) || MATERIAL_CALC_PRODUCTS[0];
+  const lf = Number(materialCalcState.linearFeet) || 0;
+  if (lf <= 0) return 0;
+  return Math.ceil(lf / (product.kind === 'rail' ? 8 : 5)) + 1;
+}
+
+function materialCalcResultsHtml() {
+  const product = MATERIAL_CALC_PRODUCTS.find(p => p.key === materialCalcState.productKey) || MATERIAL_CALC_PRODUCTS[0];
+  const style = product.styles.find(s => s.key === materialCalcState.styleKey) || product.styles[0];
+  const lf = Number(materialCalcState.linearFeet) || 0;
+  if (lf <= 0) return `<div class="attach-hint">Enter linear footage above to calculate pricing and material takeoff.</div>`;
+
+  const totalPrice = lf * style.pricePerLF;
+  const posts = computeMaterialCalcPosts();
+  return `
+    <div class="stat"><div class="stat-label">Unit Price</div><div class="stat-value">${money(style.pricePerLF)}/LF</div></div>
+    <div class="stat"><div class="stat-label">Total Price</div><div class="stat-value">${money(totalPrice)}</div></div>
+    <div class="stat"><div class="stat-label">Posts</div><div class="stat-value">${posts}</div></div>
+    ${product.kind === 'rail'
+      ? `<div class="stat"><div class="stat-label">Rails</div><div class="stat-value">${posts * style.rails}</div></div>`
+      : `<div class="stat"><div class="stat-label">Panels</div><div class="stat-value">${posts * style.height}</div></div>
+         <div class="stat"><div class="stat-label">Panel Caps</div><div class="stat-value">${posts}</div></div>`}
+    <div class="stat"><div class="stat-label">Post Caps</div><div class="stat-value">${posts}</div></div>`;
+}
+
+function materialCalcPostTallyHtml(posts) {
+  const rows = materialCalcState.postTypeRows || [];
+  const allocated = rows.reduce((sum, r) => sum + (Number(r.qty) || 0), 0);
+  const byType = POST_TYPES.map(pt => `
+    <div class="stat"><div class="stat-label">${pt}</div><div class="stat-value">${rows.filter(r => r.type === pt).reduce((s, r) => s + (Number(r.qty) || 0), 0)}</div></div>`).join('');
+  return `${byType}<div class="stat"><div class="stat-label">Allocated / Posts</div><div class="stat-value">${allocated} / ${posts}</div></div>`;
+}
+
+function materialCalcPostBreakdownHtml(posts) {
+  if (posts === 0) return `<div class="attach-hint">Enter linear footage above to break posts out by type.</div>`;
+
+  // Seed a single row defaulting to all posts as Line Posts the first time
+  // there's something to break down — left alone after that so the rep's
+  // own row edits survive further linear-footage tweaks.
+  if (!Array.isArray(materialCalcState.postTypeRows) || materialCalcState.postTypeRows.length === 0) {
+    materialCalcState.postTypeRows = [{ type: POST_TYPES[0], qty: posts }];
+  }
+
+  const rows = materialCalcState.postTypeRows;
+  const rowsHtml = rows.map((r, i) => `
+    <div style="display:flex; gap:10px; align-items:flex-end; margin-bottom:10px; flex-wrap:wrap;">
+      <div style="flex:1; min-width:200px; max-width:280px;"><label class="field-label">Post Type</label>
+        <select onchange="App.setPostTypeRowType(${i}, this.value)">
+          ${POST_TYPES.map(pt => `<option value="${pt}" ${pt===r.type?'selected':''}>${pt}</option>`).join('')}
+        </select></div>
+      <div style="width:110px;"><label class="field-label">Quantity</label>
+        <input type="number" step="1" min="0" value="${esc(r.qty)}"
+            oninput="App.setPostTypeRowQty(${i}, this.value)"></div>
+      ${rows.length > 1 ? `<button class="btn btn-danger btn-small" onclick="App.removePostTypeRow(${i})">✕</button>` : ''}
+    </div>`).join('');
+
+  return `
+    <div id="calc-post-rows">${rowsHtml}</div>
+    <button class="btn btn-outline btn-small" onclick="App.addPostTypeRow()">+ Add Post Type</button>
+    <div id="calc-post-tally" class="totals-bar" style="margin-top:14px;">${materialCalcPostTallyHtml(posts)}</div>`;
+}
+
+function materialCalcPricingReferenceHtml() {
+  const canEdit = isAdminUser(currentUser);
+  const editControls = !canEdit ? '' : editingMaterialPricing
+    ? `<button class="btn btn-primary btn-small" onclick="App.saveMaterialPricing()">Save Prices</button>
+       <button class="btn btn-outline btn-small" onclick="App.cancelEditMaterialPricing()">Cancel</button>`
+    : `<button class="btn btn-outline btn-small" onclick="App.startEditMaterialPricing()">Edit Prices</button>`;
+
+  const tablesHtml = MATERIAL_CALC_PRODUCTS.map(p => `
+    <div class="section-block">
+      <div class="section-head"><strong>${esc(p.name)}</strong></div>
+      <div class="table-scroll">
+      <table class="items">
+        <thead><tr><th class="col-desc">Style</th><th>Price / LF</th></tr></thead>
+        <tbody>${p.styles.map(s => `<tr><td class="col-desc">${esc(s.label)}</td><td class="num">${
+          editingMaterialPricing
+            ? `<input type="number" step="0.01" min="0" style="max-width:110px; text-align:right;"
+                  value="${materialPricingDraft[p.key][s.key]}" onchange="App.setMaterialPriceDraft('${p.key}','${s.key}', this.value)">`
+            : money(s.pricePerLF)
+        }</td></tr>`).join('')}</tbody>
+      </table>
+      </div>
+    </div>`).join('');
+
+  return `<div style="display:flex; justify-content:flex-end; gap:8px; margin-bottom:12px;">${editControls}</div>${tablesHtml}`;
+}
+
 function renderMaterialCalculator() {
   const d = deals.find(x => x.id === currentDealId);
   if (!d) return `<div class="empty-state">Deal not found.<div class="back-link" onclick="App.goList()">&larr; Back</div></div>`;
 
   const product = MATERIAL_CALC_PRODUCTS.find(p => p.key === materialCalcState.productKey) || MATERIAL_CALC_PRODUCTS[0];
   const style = product.styles.find(s => s.key === materialCalcState.styleKey) || product.styles[0];
-  const lf = Number(materialCalcState.linearFeet) || 0;
-
   const productOptions = MATERIAL_CALC_PRODUCTS.map(p => `<option value="${p.key}" ${p.key===product.key?'selected':''}>${esc(p.name)}</option>`).join('');
   const styleOptions = product.styles.map(s => `<option value="${s.key}" ${s.key===style.key?'selected':''}>${esc(s.label)}</option>`).join('');
-
-  let resultsHtml;
-  let posts = 0;
-  if (lf > 0) {
-    const totalPrice = lf * style.pricePerLF;
-    posts = Math.ceil(lf / (product.kind === 'rail' ? 8 : 5)) + 1;
-    resultsHtml = `
-      <div class="stat"><div class="stat-label">Unit Price</div><div class="stat-value">${money(style.pricePerLF)}/LF</div></div>
-      <div class="stat"><div class="stat-label">Total Price</div><div class="stat-value">${money(totalPrice)}</div></div>
-      <div class="stat"><div class="stat-label">Posts</div><div class="stat-value">${posts}</div></div>
-      ${product.kind === 'rail'
-        ? `<div class="stat"><div class="stat-label">Rails</div><div class="stat-value">${posts * style.rails}</div></div>`
-        : `<div class="stat"><div class="stat-label">Panels</div><div class="stat-value">${posts * style.height}</div></div>
-           <div class="stat"><div class="stat-label">Panel Caps</div><div class="stat-value">${posts}</div></div>`}
-      <div class="stat"><div class="stat-label">Post Caps</div><div class="stat-value">${posts}</div></div>`;
-  } else {
-    resultsHtml = `<div class="attach-hint">Enter linear footage above to calculate pricing and material takeoff.</div>`;
-  }
-
-  // Keep the per-post type list in sync with the computed post count —
-  // grow with the default and truncate extras, preserving what's already set.
-  if (!Array.isArray(materialCalcState.postTypes)) materialCalcState.postTypes = [];
-  while (materialCalcState.postTypes.length < posts) materialCalcState.postTypes.push(POST_TYPES[0]);
-  materialCalcState.postTypes.length = posts;
-
-  const postBreakdownHtml = posts === 0 ? `<div class="attach-hint">Enter linear footage above to break posts out by type.</div>` : `
-    <div class="check-option-grid">
-      ${materialCalcState.postTypes.map((t, i) => `
-        <div><label class="field-label">Post ${i + 1}</label>
-          <select onchange="App.setMaterialCalcPostType(${i}, this.value)">
-            ${POST_TYPES.map(pt => `<option value="${pt}" ${pt===t?'selected':''}>${pt}</option>`).join('')}
-          </select>
-        </div>`).join('')}
-    </div>
-    <div class="totals-bar" style="margin-top:14px;">
-      ${POST_TYPES.map(pt => `<div class="stat"><div class="stat-label">${pt}</div><div class="stat-value">${materialCalcState.postTypes.filter(t => t === pt).length}</div></div>`).join('')}
-    </div>`;
-
-  const referenceHtml = MATERIAL_CALC_PRODUCTS.map(p => `
-    <div class="section-block">
-      <div class="section-head"><strong>${esc(p.name)}</strong></div>
-      <div class="table-scroll">
-      <table class="items">
-        <thead><tr><th class="col-desc">Style</th><th>Price / LF</th></tr></thead>
-        <tbody>${p.styles.map(s => `<tr><td class="col-desc">${esc(s.label)}</td><td class="num">${money(s.pricePerLF)}</td></tr>`).join('')}</tbody>
-      </table>
-      </div>
-    </div>`).join('');
+  const posts = computeMaterialCalcPosts();
 
   return `
   <div class="back-link" onclick="App.viewDeal('${d.id}')">&larr; Back to deal</div>
@@ -3750,15 +3928,15 @@ function renderMaterialCalculator() {
             oninput="App.setMaterialCalcField('linearFeet', this.value)"></div>
     </div>
 
-    <div class="totals-bar">
-      ${resultsHtml}
+    <div class="totals-bar" id="calc-results">
+      ${materialCalcResultsHtml()}
     </div>
   </div>
 
   <div class="panel">
     <h2>Post Type Breakdown</h2>
-    <p class="attach-hint" style="margin-top:-6px;">Denote each post's type for material ordering — defaults to Line Posts.</p>
-    ${postBreakdownHtml}
+    <p class="attach-hint" style="margin-top:-6px;">Denote each post type and how many you need for material ordering.</p>
+    <div id="calc-post-breakdown">${materialCalcPostBreakdownHtml(posts)}</div>
   </div>
 
   <div class="panel">
@@ -3772,7 +3950,7 @@ function renderMaterialCalculator() {
 
   <div class="panel">
     <h2>Pricing Reference</h2>
-    ${referenceHtml}
+    ${materialCalcPricingReferenceHtml()}
   </div>`;
 }
 
@@ -3888,6 +4066,7 @@ async function initApp() {
     try { await window.__firebaseSeedTemplates(); } catch (e) { console.error('Template seed failed:', e); }
   }
   await subscribeToTemplatesOnce();
+  await subscribeToMaterialPricingOnce();
   render();
 }
 
