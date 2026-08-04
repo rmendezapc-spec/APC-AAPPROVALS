@@ -1236,6 +1236,8 @@ const PROPERTY_TYPES = ['Single-Family','Multi-Family','New Construction','Remod
 const ACCESS_OPTIONS = ['Easy — full access','Moderate — some restrictions','Difficult — tight / crane needed'];
 const DEFAULT_SECTIONS = ['General Requirements','Labor & Installation','Materials & Products','Mobilization'];
 
+const POST_TYPES = ['Line Posts','End Posts','Corner Posts','T-Posts'];
+
 // Per-linear-foot install-only pricing for the Material Calculator. Rail
 // systems are taken off by rail count; every other style is a stacked-panel
 // fence taken off by height — see renderMaterialCalculator's "Estimation
@@ -1310,7 +1312,7 @@ let currentDealId = null;
 let detailTab = 'overview'; // 'overview' | 'handoff' | 'engineering', for the deal detail view's tab bar
 let storageError = false;
 let storageErrorDetail = '';
-let materialCalcState = { productKey: MATERIAL_CALC_PRODUCTS[0].key, styleKey: MATERIAL_CALC_PRODUCTS[0].styles[0].key, linearFeet: '' };
+let materialCalcState = { productKey: MATERIAL_CALC_PRODUCTS[0].key, styleKey: MATERIAL_CALC_PRODUCTS[0].styles[0].key, linearFeet: '', postTypes: [] };
 
 function uid(prefix) { return prefix + '_' + Date.now() + '_' + Math.floor(Math.random()*10000); }
 
@@ -2228,6 +2230,11 @@ const App = {
       const product = MATERIAL_CALC_PRODUCTS.find(p => p.key === value);
       materialCalcState.styleKey = product.styles[0].key;
     }
+    render();
+  },
+
+  setMaterialCalcPostType(index, value) {
+    materialCalcState.postTypes[index] = value;
     render();
   },
 
@@ -3680,9 +3687,10 @@ function renderMaterialCalculator() {
   const styleOptions = product.styles.map(s => `<option value="${s.key}" ${s.key===style.key?'selected':''}>${esc(s.label)}</option>`).join('');
 
   let resultsHtml;
+  let posts = 0;
   if (lf > 0) {
     const totalPrice = lf * style.pricePerLF;
-    const posts = Math.ceil(lf / (product.kind === 'rail' ? 8 : 5)) + 1;
+    posts = Math.ceil(lf / (product.kind === 'rail' ? 8 : 5)) + 1;
     resultsHtml = `
       <div class="stat"><div class="stat-label">Unit Price</div><div class="stat-value">${money(style.pricePerLF)}/LF</div></div>
       <div class="stat"><div class="stat-label">Total Price</div><div class="stat-value">${money(totalPrice)}</div></div>
@@ -3695,6 +3703,25 @@ function renderMaterialCalculator() {
   } else {
     resultsHtml = `<div class="attach-hint">Enter linear footage above to calculate pricing and material takeoff.</div>`;
   }
+
+  // Keep the per-post type list in sync with the computed post count —
+  // grow with the default and truncate extras, preserving what's already set.
+  if (!Array.isArray(materialCalcState.postTypes)) materialCalcState.postTypes = [];
+  while (materialCalcState.postTypes.length < posts) materialCalcState.postTypes.push(POST_TYPES[0]);
+  materialCalcState.postTypes.length = posts;
+
+  const postBreakdownHtml = posts === 0 ? `<div class="attach-hint">Enter linear footage above to break posts out by type.</div>` : `
+    <div class="check-option-grid">
+      ${materialCalcState.postTypes.map((t, i) => `
+        <div><label class="field-label">Post ${i + 1}</label>
+          <select onchange="App.setMaterialCalcPostType(${i}, this.value)">
+            ${POST_TYPES.map(pt => `<option value="${pt}" ${pt===t?'selected':''}>${pt}</option>`).join('')}
+          </select>
+        </div>`).join('')}
+    </div>
+    <div class="totals-bar" style="margin-top:14px;">
+      ${POST_TYPES.map(pt => `<div class="stat"><div class="stat-label">${pt}</div><div class="stat-value">${materialCalcState.postTypes.filter(t => t === pt).length}</div></div>`).join('')}
+    </div>`;
 
   const referenceHtml = MATERIAL_CALC_PRODUCTS.map(p => `
     <div class="section-block">
@@ -3726,6 +3753,12 @@ function renderMaterialCalculator() {
     <div class="totals-bar">
       ${resultsHtml}
     </div>
+  </div>
+
+  <div class="panel">
+    <h2>Post Type Breakdown</h2>
+    <p class="attach-hint" style="margin-top:-6px;">Denote each post's type for material ordering — defaults to Line Posts.</p>
+    ${postBreakdownHtml}
   </div>
 
   <div class="panel">
