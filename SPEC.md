@@ -344,3 +344,23 @@ live sheet cells won't confuse you:
   business taxonomy call, not a pure logic fix, and hasn't been made
   unilaterally. Materials currently render exactly as the source data spells
   them.
+- **Material Type is now editable per deal row** (Deals tab), stored as a
+  text override keyed the same way as Freight/Tax/Collected (the generic
+  `salesReportOverrides` document, no new Firestore collection needed).
+  Retyping a deal's material shifts its dollar amount from the old material
+  bucket to the new one in the Materials tab's breakdown for both baked and
+  uploaded deals, so a corrected material always nets to the same YTD total.
+- **Upload duplicate detection**: new CSV/xlsx rows are matched against
+  existing deals by Record ID first, then a normalized name+closeDate+amount
+  composite. Exact matches are skipped automatically; a "possible duplicate"
+  (same name+amount, different date/ID) gets a review row defaulting to Skip
+  so ambiguous cases are never silently guessed on financial data — chosen
+  over an open-ended chatbox for reliability.
+- **Add Deal and Record Payment are now one modal** (`#add-deal-overlay`)
+  with an Action dropdown switching between the two field sets — replacing
+  the separate "Mark Collected" dialog. The per-row "Collect" button now
+  opens this same modal in Record Payment mode with its deal preselected and
+  its Amount Collected Now field pre-filled from that deal's current
+  Outstanding. The modal also locks background scroll while open (matches
+  the tab-settings modal) and widened to `max-width: 620px` for this mode's
+  extra fields.
