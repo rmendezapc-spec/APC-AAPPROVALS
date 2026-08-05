@@ -128,6 +128,7 @@
     font-family: var(--sans);
     transition: filter 0.12s ease, box-shadow 0.12s ease, transform 0.12s ease;
   }
+  a.btn { text-decoration: none; display: inline-block; }
   .btn:hover { filter: brightness(0.95); }
   .btn:active { filter: brightness(0.88); transform: translateY(1px); box-shadow: none !important; }
 
@@ -823,6 +824,7 @@
   <div class="nav">
     <button class="btn btn-ghost" onclick="App.goList()">All Deals</button>
     <button class="btn btn-primary" onclick="App.goNewDeal()">+ New Deal</button>
+    <a class="btn btn-ghost" href="sales-report.html">Sales Report</a>
     <div class="notif-wrap">
       <button class="btn btn-ghost icon-btn" id="notif-btn" onclick="toggleNotifMenu(event)" title="Notifications">
         🔔<span class="notif-badge" id="notif-badge" style="display:none;">0</span>
