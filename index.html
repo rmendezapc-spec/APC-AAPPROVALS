@@ -839,6 +839,7 @@
         <button class="settings-menu-item" id="manage-users-btn" onclick="closeSettingsMenu(); App.goManageUsers();" style="display:none;">Manage Users</button>
         <button class="settings-menu-item" id="manage-templates-btn" onclick="closeSettingsMenu(); App.goManageTemplates();" style="display:none;">Proposal Templates</button>
         <button class="settings-menu-item" id="manage-cost-codes-btn" onclick="closeSettingsMenu(); App.goManageCostCodes();" style="display:none;">Cost Code Library</button>
+        <button class="settings-menu-item" id="manage-deal-templates-btn" onclick="closeSettingsMenu(); App.goManageDealTemplates();" style="display:none;">Deal Templates</button>
         <button class="settings-menu-item" id="theme-toggle-btn" onclick="toggleTheme()">🌙 Dark Mode</button>
         <button class="settings-menu-item" onclick="closeSettingsMenu(); App.goChangePassword();">Change Password</button>
         <button class="settings-menu-item" onclick="closeSettingsMenu(); logout();">Log Out</button>
@@ -932,6 +933,7 @@
   const settingsCollRef = collection(db, 'settings');
   const notificationsCollRef = collection(db, 'notifications');
   const costCodesCollRef = collection(db, 'costCodes');
+  const dealTemplatesCollRef = collection(db, 'dealTemplates');
 
   // Each deal is its own document, keyed by the deal's own id. This avoids the
   // 1MB single-document cap and the "last write wins, whole list" concurrency
@@ -1145,6 +1147,95 @@
     }
   };
 
+  // Deal templates — a saved Cost Breakdown structure (sections + line
+  // items, each tagged with a cost code) applied automatically when a rep
+  // starts a new deal, instead of the 4 empty default sections. Captured
+  // from a real deal via "Save as Template" rather than hand-built, so the
+  // structure/items shape always matches what a deal's own Cost Breakdown
+  // already produces.
+  window.__firebaseSaveDealTemplate = async function (template) {
+    try {
+      await setDoc(doc(dealTemplatesCollRef, template.id), template);
+      return { ok: true };
+    } catch (e) {
+      console.error('Firestore save deal template failed:', e);
+      return { ok: false, error: (e && e.message) || String(e) };
+    }
+  };
+
+  window.__firebaseDeleteDealTemplate = async function (templateId) {
+    try {
+      await deleteDoc(doc(dealTemplatesCollRef, templateId));
+      return { ok: true };
+    } catch (e) {
+      console.error('Firestore delete deal template failed:', e);
+      return { ok: false, error: (e && e.message) || String(e) };
+    }
+  };
+
+  window.__firebaseSubscribeDealTemplates = function (onData, onError) {
+    onSnapshot(dealTemplatesCollRef, (snap) => {
+      const arr = [];
+      snap.forEach((d) => arr.push(d.data()));
+      onData(arr);
+    }, (err) => {
+      console.error('Firestore listen error (deal templates):', err);
+      if (onError) onError(err);
+    });
+  };
+
+  // Seeds "Main Template" from the company's real Buildertrend estimate
+  // structure (groups + cost-coded line items, quantities/costs left at 0
+  // for the rep to fill in per job). Fixed id so it backfills once and
+  // any later edits to it stick across reloads, same as the other seeds.
+  window.__firebaseSeedDealTemplates = async function () {
+    try {
+      const existing = await getDocs(dealTemplatesCollRef);
+      if (!existing.empty) return;
+      const item = (desc, costCodeId, unit, costType, markupPercent) =>
+        ({ id: 'item_' + Math.random().toString(36).slice(2), desc, costCodeId, qty: 1, unit, unitCost: 0, costType, costTypeOther: '', markupPercent });
+      const section = (name, items) => ({ id: 'sec_' + Math.random().toString(36).slice(2), name, items });
+      const mainTemplate = {
+        id: 'dtpl_main',
+        name: 'Main Template',
+        sections: [
+          section('General Requirement', [
+            item('Engineering', 'cc_1020', 'each', 'Other', 25)
+          ]),
+          section('CFI Installation', [
+            item('Set Up/Drilling/Setting/Patch/Paint/Clean up', 'cc_3010', 'days', 'Labor', 25),
+            item('Ready Mix - For Piers', 'cc_3020', 'cu. yd.', 'Material', 25),
+            item('Pump', 'cc_3030', 'each', 'Subcontractor', 25),
+            item('I Beams', 'cc_3055', 'each', 'Equipment', 25),
+            item('Rebar Cages', 'cc_3050', 'each', 'Material', 25),
+            item('Equipment Rental - Skid/Fork', 'cc_3075', 'months', 'Equipment', 25),
+            item('Equipment Rental - Mini-ex/Drill', 'cc_3075', 'months', 'Equipment', 25),
+            item('Job Supplies and Consumables', 'cc_3065', 'each', 'Material', 25),
+            item('Trash Removal', 'cc_3090', 'each', 'Labor', 25),
+            item('Paint Supply', 'cc_3080', 'Gallon', 'None', 25)
+          ]),
+          section('Mobilization', [
+            item('Drive Time', 'cc_4020', 'each', 'Labor', 25),
+            item('Housing', 'cc_4000', 'each', 'Other', 25),
+            item('Per Diem', 'cc_4010', 'each', 'Other', 25)
+          ]),
+          section('Precast Concrete Wall Product', [
+            item('American Precast Concrete Wall System', 'cc_5009', 'LF', 'Other', 0),
+            item('American Precast Concrete Wall System', 'cc_5020', 'each', 'Other', 0),
+            item('American Precast Concrete Wall System Delivery', 'cc_5010', 'each', 'Subcontractor', 0)
+          ]),
+          section('Unassigned', [
+            item('22% of total job cost except for materials', 'cc_6020', 'each', 'None', 0)
+          ])
+        ],
+        createdAt: Date.now()
+      };
+      await setDoc(doc(dealTemplatesCollRef, mainTemplate.id), mainTemplate);
+    } catch (e) {
+      console.error('Deal template seed failed:', e);
+    }
+  };
+
   // Material Calculator per-LF base prices, editable by admins/approvers
   // from the calculator's Pricing Reference panel. One shared document —
   // { [productKey]: { [styleKey]: price } } — same trust model as
@@ -1302,6 +1393,8 @@ function updateUserChrome() {
   if (templatesBtn) templatesBtn.style.display = currentUser ? '' : 'none';
   const costCodesBtn = document.getElementById('manage-cost-codes-btn');
   if (costCodesBtn) costCodesBtn.style.display = currentUser ? '' : 'none';
+  const dealTemplatesBtn = document.getElementById('manage-deal-templates-btn');
+  if (dealTemplatesBtn) dealTemplatesBtn.style.display = currentUser ? '' : 'none';
 }
 
 let gateLoadError = '';
@@ -1546,6 +1639,7 @@ const MATERIAL_CALC_PRODUCTS = [
 let deals = [];
 let allTemplates = [];
 let costCodes = [];
+let dealTemplates = [];
 let selectedTemplateId = null;
 let currentView = 'list';
 let currentFilter = 'all';
@@ -1679,6 +1773,18 @@ function subscribeToCostCodesOnce() {
     window.__firebaseSubscribeCostCodes((codes) => {
       costCodes = codes.sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }));
       if (currentView === 'form' || currentView === 'cost-codes') render();
+      if (!settled) { settled = true; resolve(); }
+    }, () => { if (!settled) { settled = true; resolve(); } });
+  });
+}
+
+function subscribeToDealTemplatesOnce() {
+  return new Promise((resolve) => {
+    if (!window.__firebaseSubscribeDealTemplates) { resolve(); return; }
+    let settled = false;
+    window.__firebaseSubscribeDealTemplates((templates) => {
+      dealTemplates = templates.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+      if (currentView === 'deal-templates') render();
       if (!settled) { settled = true; resolve(); }
     }, () => { if (!settled) { settled = true; resolve(); } });
   });
@@ -2726,8 +2832,20 @@ const App = {
     render();
   },
 
+  // Starts from "Main Template"'s Cost Breakdown structure (falling back to
+  // the first available template, then to blankDeal()'s bare sections if
+  // none exist yet) rather than always starting empty — fresh ids per
+  // section/item so editing this deal never mutates the template itself.
   goNewDeal() {
     draftDeal = blankDeal();
+    const template = dealTemplates.find(t => t.name === 'Main Template') || dealTemplates[0];
+    if (template) {
+      draftDeal.sections = template.sections.map(sec => ({
+        id: uid('sec'),
+        name: sec.name,
+        items: sec.items.map(item => ({ ...item, id: uid('item') }))
+      }));
+    }
     submissionChecklistErrors = null;
     currentView = 'form';
     render();
@@ -3701,6 +3819,66 @@ const App = {
       if (code.defaultUnit) i.unit = code.defaultUnit;
     }
     render();
+  },
+
+  goManageDealTemplates() {
+    if (!currentUser) return;
+    currentView = 'deal-templates';
+    render();
+  },
+
+  // Captures the current draft's Cost Breakdown as a reusable template —
+  // this is the only way templates get their line items; there's no
+  // separate item editor for templates themselves, so it's always a real,
+  // already-tested deal structure rather than hand-typed template data.
+  async saveAsDealTemplate() {
+    if (!currentUser) return;
+    const hasItems = draftDeal.sections.some(s => s.items.length > 0);
+    if (!hasItems) {
+      alert('Add at least one line item before saving this as a template.');
+      return;
+    }
+    const defaultName = 'Main Template';
+    const name = (prompt('Name this template:', defaultName) || '').trim();
+    if (!name) return;
+    const existing = dealTemplates.find(t => t.name.toLowerCase() === name.toLowerCase());
+    const template = {
+      id: existing ? existing.id : uid('dtpl'),
+      name,
+      sections: draftDeal.sections.map(sec => ({
+        id: uid('sec'),
+        name: sec.name,
+        items: sec.items.map(item => ({ ...item, id: uid('item') }))
+      })),
+      createdAt: existing ? existing.createdAt : Date.now()
+    };
+    if (window.__firebaseSaveDealTemplate) {
+      const result = await window.__firebaseSaveDealTemplate(template);
+      alert(result.ok ? `Saved as template "${name}".` : 'Failed to save template — try again. ' + (result.error || ''));
+    }
+  },
+
+  updateDealTemplateField(templateId, field, value) {
+    if (!currentUser) return;
+    const t = dealTemplates.find(x => x.id === templateId);
+    if (t) t[field] = value;
+  },
+
+  async saveDealTemplateField(templateId) {
+    if (!currentUser) return;
+    const t = dealTemplates.find(x => x.id === templateId);
+    if (!t || !window.__firebaseSaveDealTemplate) return;
+    await window.__firebaseSaveDealTemplate(t);
+    render();
+  },
+
+  async removeDealTemplate(templateId) {
+    if (!currentUser) return;
+    const t = dealTemplates.find(x => x.id === templateId);
+    if (!t) return;
+    if (!confirm('Remove template "' + t.name + '"? This cannot be undone.')) return;
+    if (window.__firebaseDeleteDealTemplate) await window.__firebaseDeleteDealTemplate(templateId);
+    render();
   }
 };
 
@@ -3724,6 +3902,7 @@ function render() {
   else if (currentView === 'change-password') main.innerHTML = renderChangePassword();
   else if (currentView === 'templates') main.innerHTML = renderTemplates();
   else if (currentView === 'cost-codes') main.innerHTML = renderCostCodes();
+  else if (currentView === 'deal-templates') main.innerHTML = renderDealTemplates();
   else if (currentView === 'proposal') main.innerHTML = renderProposal();
   else if (currentView === 'material-calc') main.innerHTML = renderMaterialCalculator();
   else if (currentView === 'material-estimate-view') main.innerHTML = renderMaterialEstimateView();
@@ -3958,6 +4137,7 @@ function renderForm() {
     <h2>Cost Breakdown</h2>
     ${sectionsHtml}
     <button class="btn btn-outline" onclick="App.addSection()">+ Add Section</button>
+    <button class="btn btn-outline" onclick="App.saveAsDealTemplate()">💾 Save as Template</button>
 
     <div class="totals-bar">
       <div class="stat"><div class="stat-label">Total Builder Cost</div><div class="stat-value" id="grand-buildercost">${money(dealBuilderCost(d))}</div></div>
@@ -4753,6 +4933,39 @@ function renderCostCodes() {
   </div>`;
 }
 
+function renderDealTemplates() {
+  if (!currentUser) {
+    return `<div class="empty-state">You don't have access to this page.<div class="back-link" onclick="App.goList()">&larr; Back</div></div>`;
+  }
+
+  const templatesHtml = dealTemplates.map(t => {
+    const itemCount = t.sections.reduce((sum, s) => sum + s.items.length, 0);
+    const sectionsPreview = t.sections.map(sec => `
+      <div style="margin-bottom:8px;">
+        <strong>${esc(sec.name)}</strong>
+        <div style="color:var(--muted); font-size:12.5px;">${sec.items.map(i => esc(i.desc)).join(', ') || 'No items'}</div>
+      </div>`).join('');
+    return `
+    <div class="panel">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px; flex-wrap:wrap;">
+        <input type="text" value="${esc(t.name)}" style="font-weight:700; font-size:15px; max-width:320px;"
+          onchange="App.updateDealTemplateField('${t.id}','name', this.value); App.saveDealTemplateField('${t.id}')">
+        <button class="btn btn-danger btn-small" onclick="App.removeDealTemplate('${t.id}')">Delete Template</button>
+      </div>
+      <p class="attach-hint" style="margin:0 0 10px;">${t.sections.length} section${t.sections.length===1?'':'s'}, ${itemCount} line item${itemCount===1?'':'s'}</p>
+      ${sectionsPreview}
+    </div>`;
+  }).join('');
+
+  return `
+  <div class="back-link" onclick="App.goList()">&larr; Back to all deals</div>
+  <div class="panel">
+    <h2>Deal Templates</h2>
+    <p class="attach-hint">Applied automatically when a rep clicks + New Deal — "Main Template" is the default starting Cost Breakdown. There's no separate item editor here: to change what's in one, start a new deal (or edit an existing one), adjust its Cost Breakdown, then use "Save as Template" to update it. Renaming a template here only changes its name.</p>
+  </div>
+  ${templatesHtml || '<div class="empty-state">No deal templates yet — start a new deal, build out its Cost Breakdown, and use "Save as Template."</div>'}`;
+}
+
 // Fence-product takeoff calculator: rail systems (Woodcrete Rail) are taken
 // off by rail count, every other style is a stacked precast panel fence
 // taken off by height. See the on-page "Estimation Methodology" panel for
@@ -5090,6 +5303,10 @@ async function initApp() {
     try { await window.__firebaseSeedCostCodes(); } catch (e) { console.error('Cost code seed failed:', e); }
   }
   await subscribeToCostCodesOnce();
+  if (window.__firebaseSeedDealTemplates) {
+    try { await window.__firebaseSeedDealTemplates(); } catch (e) { console.error('Deal template seed failed:', e); }
+  }
+  await subscribeToDealTemplatesOnce();
   render();
 }
 
