@@ -838,6 +838,7 @@
         <div class="current-user-label" id="current-user-label"></div>
         <button class="settings-menu-item" id="manage-users-btn" onclick="closeSettingsMenu(); App.goManageUsers();" style="display:none;">Manage Users</button>
         <button class="settings-menu-item" id="manage-templates-btn" onclick="closeSettingsMenu(); App.goManageTemplates();" style="display:none;">Proposal Templates</button>
+        <button class="settings-menu-item" id="manage-cost-codes-btn" onclick="closeSettingsMenu(); App.goManageCostCodes();" style="display:none;">Cost Code Library</button>
         <button class="settings-menu-item" id="theme-toggle-btn" onclick="toggleTheme()">🌙 Dark Mode</button>
         <button class="settings-menu-item" onclick="closeSettingsMenu(); App.goChangePassword();">Change Password</button>
         <button class="settings-menu-item" onclick="closeSettingsMenu(); logout();">Log Out</button>
@@ -930,6 +931,7 @@
   const templatesCollRef = collection(db, 'templates');
   const settingsCollRef = collection(db, 'settings');
   const notificationsCollRef = collection(db, 'notifications');
+  const costCodesCollRef = collection(db, 'costCodes');
 
   // Each deal is its own document, keyed by the deal's own id. This avoids the
   // 1MB single-document cap and the "last write wins, whole list" concurrency
@@ -1070,6 +1072,77 @@
       console.error('Firestore listen error (templates):', err);
       if (onError) onError(err);
     });
+  };
+
+  // Shared cost code library (e.g. "3010 - Installer Labor - Installation")
+  // reps attach to line items so cost breakdowns use consistent naming and
+  // classification instead of free-typed descriptions every time.
+  window.__firebaseSaveCostCode = async function (costCode) {
+    try {
+      await setDoc(doc(costCodesCollRef, costCode.id), costCode);
+      return { ok: true };
+    } catch (e) {
+      console.error('Firestore save cost code failed:', e);
+      return { ok: false, error: (e && e.message) || String(e) };
+    }
+  };
+
+  window.__firebaseDeleteCostCode = async function (costCodeId) {
+    try {
+      await deleteDoc(doc(costCodesCollRef, costCodeId));
+      return { ok: true };
+    } catch (e) {
+      console.error('Firestore delete cost code failed:', e);
+      return { ok: false, error: (e && e.message) || String(e) };
+    }
+  };
+
+  window.__firebaseSubscribeCostCodes = function (onData, onError) {
+    onSnapshot(costCodesCollRef, (snap) => {
+      const arr = [];
+      snap.forEach((d) => arr.push(d.data()));
+      onData(arr);
+    }, (err) => {
+      console.error('Firestore listen error (cost codes):', err);
+      if (onError) onError(err);
+    });
+  };
+
+  // Seeds the codes already in use on paper/Buildertrend, so the library
+  // starts populated instead of empty. Backfills only missing ids, same as
+  // the user seed, so edits to these starter codes stick across reloads.
+  window.__firebaseSeedCostCodes = async function () {
+    try {
+      const existing = await getDocs(costCodesCollRef);
+      const existingIds = new Set();
+      existing.forEach((d) => existingIds.add(d.id));
+      const seed = [
+        { id: 'cc_1020', code: '1020', name: 'Engineering', category: 'General Requirements', defaultCostType: 'Other', defaultUnit: 'each' },
+        { id: 'cc_3010', code: '3010', name: 'Installer Labor', category: 'Installation', defaultCostType: 'Labor', defaultUnit: 'Hours' },
+        { id: 'cc_3020', code: '3020', name: 'Ready Mix', category: 'Installation', defaultCostType: 'Material', defaultUnit: 'cu. yd.' },
+        { id: 'cc_3030', code: '3030', name: 'Pump', category: 'Installation', defaultCostType: 'Subcontractor', defaultUnit: 'each' },
+        { id: 'cc_3050', code: '3050', name: 'Rebar Cages', category: 'Installation', defaultCostType: 'Material', defaultUnit: 'each' },
+        { id: 'cc_3055', code: '3055', name: 'I Beams', category: 'Installation', defaultCostType: 'Equipment', defaultUnit: 'each' },
+        { id: 'cc_3065', code: '3065', name: 'Job Supplies Consumables', category: 'Installation', defaultCostType: 'Material', defaultUnit: 'each' },
+        { id: 'cc_3075', code: '3075', name: 'Equipment Rentals', category: 'Installation', defaultCostType: 'Equipment', defaultUnit: 'months' },
+        { id: 'cc_3080', code: '3080', name: 'Paint', category: 'Installation', defaultCostType: 'None', defaultUnit: 'Gallon' },
+        { id: 'cc_3090', code: '3090', name: 'Trash Bin and Hauling', category: 'Hauling and Dumping', defaultCostType: 'Labor', defaultUnit: 'each' },
+        { id: 'cc_4000', code: '4000', name: 'Housing/Airbnb/Hotel', category: 'Mobilization', defaultCostType: 'Other', defaultUnit: 'each' },
+        { id: 'cc_4010', code: '4010', name: 'Per Diem', category: 'Mobilization', defaultCostType: 'Other', defaultUnit: 'each' },
+        { id: 'cc_4020', code: '4020', name: 'Drive Time', category: 'Mobilization', defaultCostType: 'Labor', defaultUnit: 'each' },
+        { id: 'cc_5009', code: '5009', name: 'Precast Wall', category: 'Precast Concrete Wall', defaultCostType: 'Other', defaultUnit: 'LF' },
+        { id: 'cc_5010', code: '5010', name: 'Freight', category: 'Precast Concrete Wall', defaultCostType: 'Subcontractor', defaultUnit: 'each' },
+        { id: 'cc_5020', code: '5020', name: 'Tax', category: 'Precast Concrete Wall', defaultCostType: 'Other', defaultUnit: 'each' },
+        { id: 'cc_6020', code: '6020', name: 'Overhead', category: 'Unassigned', defaultCostType: 'None', defaultUnit: 'each' }
+      ];
+      for (const code of seed) {
+        if (!existingIds.has(code.id)) {
+          await setDoc(doc(costCodesCollRef, code.id), { ...code, createdAt: Date.now() });
+        }
+      }
+    } catch (e) {
+      console.error('Cost code seed failed:', e);
+    }
   };
 
   // Material Calculator per-LF base prices, editable by admins/approvers
@@ -1227,6 +1300,8 @@ function updateUserChrome() {
   if (manageBtn) manageBtn.style.display = isAdminUser(currentUser) ? '' : 'none';
   const templatesBtn = document.getElementById('manage-templates-btn');
   if (templatesBtn) templatesBtn.style.display = currentUser ? '' : 'none';
+  const costCodesBtn = document.getElementById('manage-cost-codes-btn');
+  if (costCodesBtn) costCodesBtn.style.display = currentUser ? '' : 'none';
 }
 
 let gateLoadError = '';
@@ -1470,6 +1545,7 @@ const MATERIAL_CALC_PRODUCTS = [
 
 let deals = [];
 let allTemplates = [];
+let costCodes = [];
 let selectedTemplateId = null;
 let currentView = 'list';
 let currentFilter = 'all';
@@ -1583,6 +1659,26 @@ function subscribeToTemplatesOnce() {
     window.__firebaseSubscribeTemplates((templates) => {
       allTemplates = templates;
       if (currentView === 'proposal' || currentView === 'templates') render();
+      if (!settled) { settled = true; resolve(); }
+    }, () => { if (!settled) { settled = true; resolve(); } });
+  });
+}
+
+function costCodeLabel(c) {
+  return c.code + ' - ' + c.name + (c.category ? ' - ' + c.category : '');
+}
+
+function costCodeOptions(selectedId) {
+  return costCodes.map(c => `<option value="${c.id}" ${c.id === selectedId ? 'selected' : ''}>${esc(costCodeLabel(c))}</option>`).join('');
+}
+
+function subscribeToCostCodesOnce() {
+  return new Promise((resolve) => {
+    if (!window.__firebaseSubscribeCostCodes) { resolve(); return; }
+    let settled = false;
+    window.__firebaseSubscribeCostCodes((codes) => {
+      costCodes = codes.sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }));
+      if (currentView === 'form' || currentView === 'cost-codes') render();
       if (!settled) { settled = true; resolve(); }
     }, () => { if (!settled) { settled = true; resolve(); } });
   });
@@ -1714,7 +1810,7 @@ function blankDeal() {
 }
 
 function blankItem() {
-  return { id: uid('item'), desc: '', qty: 1, unit: 'each', unitCost: 0, costType: 'Material', costTypeOther: '', markupPercent: 25 };
+  return { id: uid('item'), desc: '', qty: 1, unit: 'each', unitCost: 0, costType: 'Material', costTypeOther: '', markupPercent: 25, costCodeId: '' };
 }
 
 // Sets a nested value by path (array of keys/indices), creating no
@@ -3529,6 +3625,82 @@ const App = {
     if (!confirm('Remove template "' + t.name + '"? This cannot be undone.')) return;
     if (window.__firebaseDeleteTemplate) await window.__firebaseDeleteTemplate(templateId);
     render();
+  },
+
+  goManageCostCodes() {
+    if (!currentUser) return;
+    currentView = 'cost-codes';
+    render();
+  },
+
+  // Cost codes are open to any logged-in user, same as Templates — any rep
+  // building a Cost Breakdown may need to add a code that isn't there yet.
+  updateCostCodeField(costCodeId, field, value) {
+    if (!currentUser) return;
+    const c = costCodes.find(x => x.id === costCodeId);
+    if (c) c[field] = value;
+  },
+
+  async saveCostCodeField(costCodeId) {
+    if (!currentUser) return;
+    const c = costCodes.find(x => x.id === costCodeId);
+    if (!c || !window.__firebaseSaveCostCode) return;
+    await window.__firebaseSaveCostCode(c);
+    render();
+  },
+
+  async addCostCode() {
+    if (!currentUser) return;
+    const codeInput = document.getElementById('new-cost-code-code');
+    const nameInput = document.getElementById('new-cost-code-name');
+    const categoryInput = document.getElementById('new-cost-code-category');
+    const code = (codeInput.value || '').trim();
+    const name = (nameInput.value || '').trim();
+    if (!code || !name) {
+      alert('Enter both a code number and a name.');
+      return;
+    }
+    if (costCodes.some(c => c.code === code)) {
+      alert('Cost code "' + code + '" already exists.');
+      return;
+    }
+    const costCode = {
+      id: uid('cc'), code, name,
+      category: (categoryInput.value || '').trim(),
+      defaultCostType: '', defaultUnit: '',
+      createdAt: Date.now()
+    };
+    if (window.__firebaseSaveCostCode) await window.__firebaseSaveCostCode(costCode);
+    codeInput.value = '';
+    nameInput.value = '';
+    categoryInput.value = '';
+    render();
+  },
+
+  async removeCostCode(costCodeId) {
+    if (!currentUser) return;
+    const c = costCodes.find(x => x.id === costCodeId);
+    if (!c) return;
+    if (!confirm('Remove cost code "' + costCodeLabel(c) + '"? This cannot be undone.')) return;
+    if (window.__firebaseDeleteCostCode) await window.__firebaseDeleteCostCode(costCodeId);
+    render();
+  },
+
+  // Attaching a code auto-fills the description (only if still blank) and
+  // syncs the cost type to the code's default — the whole point of a code
+  // is consistent classification, so that one always wins.
+  setItemCostCode(secId, itemId, costCodeId) {
+    const s = draftDeal.sections.find(s => s.id === secId);
+    const i = s && s.items.find(i => i.id === itemId);
+    if (!i) return;
+    i.costCodeId = costCodeId;
+    const code = costCodeId ? costCodes.find(c => c.id === costCodeId) : null;
+    if (code) {
+      if (!i.desc.trim()) i.desc = code.name;
+      if (code.defaultCostType) i.costType = code.defaultCostType;
+      if (code.defaultUnit) i.unit = code.defaultUnit;
+    }
+    render();
   }
 };
 
@@ -3551,6 +3723,7 @@ function render() {
   else if (currentView === 'users') main.innerHTML = renderUsers();
   else if (currentView === 'change-password') main.innerHTML = renderChangePassword();
   else if (currentView === 'templates') main.innerHTML = renderTemplates();
+  else if (currentView === 'cost-codes') main.innerHTML = renderCostCodes();
   else if (currentView === 'proposal') main.innerHTML = renderProposal();
   else if (currentView === 'material-calc') main.innerHTML = renderMaterialCalculator();
   else if (currentView === 'material-estimate-view') main.innerHTML = renderMaterialEstimateView();
@@ -3606,8 +3779,14 @@ function renderForm() {
       const c = itemCalc(item);
       return `
       <tr>
-        <td class="col-desc"><input type="text" value="${esc(item.desc)}" placeholder="Item description"
-            oninput="App.updateItemText('${sec.id}','${item.id}','desc', this.value)"></td>
+        <td class="col-desc">
+          ${costCodes.length ? `<select style="margin-bottom:4px; font-size:11.5px;" onchange="App.setItemCostCode('${sec.id}','${item.id}', this.value)">
+            <option value="">No cost code</option>
+            ${costCodeOptions(item.costCodeId)}
+          </select>` : ''}
+          <input type="text" value="${esc(item.desc)}" placeholder="Item description"
+              oninput="App.updateItemText('${sec.id}','${item.id}','desc', this.value)">
+        </td>
         <td><input type="number" step="any" value="${item.qty}"
             oninput="App.updateItemNumeric('${sec.id}','${item.id}','qty', this.value)"></td>
         <td><input type="text" value="${esc(item.unit)}" placeholder="each"
@@ -3834,7 +4013,10 @@ function renderDetail() {
       const c = itemCalc(item);
       return `
       <tr>
-        <td class="col-desc">${esc(item.desc || '—')}</td>
+        <td class="col-desc">${esc(item.desc || '—')}${item.costCodeId ? (() => {
+          const c = costCodes.find(cc => cc.id === item.costCodeId);
+          return c ? `<div style="font-size:11px; color:var(--muted); margin-top:2px;">${esc(costCodeLabel(c))}</div>` : '';
+        })() : ''}</td>
         <td class="num">${item.qty}</td>
         <td>${esc(item.unit)}</td>
         <td class="num">${money(item.unitCost)}</td>
@@ -4519,6 +4701,58 @@ function renderTemplates() {
   </div>`;
 }
 
+function renderCostCodes() {
+  if (!currentUser) {
+    return `<div class="empty-state">You don't have access to this page.<div class="back-link" onclick="App.goList()">&larr; Back</div></div>`;
+  }
+
+  const rows = costCodes.map(c => `
+    <tr>
+      <td><input type="text" value="${esc(c.code)}" style="max-width:80px;"
+          onchange="App.updateCostCodeField('${c.id}','code', this.value); App.saveCostCodeField('${c.id}')"></td>
+      <td><input type="text" value="${esc(c.name)}"
+          onchange="App.updateCostCodeField('${c.id}','name', this.value); App.saveCostCodeField('${c.id}')"></td>
+      <td><input type="text" value="${esc(c.category)}"
+          onchange="App.updateCostCodeField('${c.id}','category', this.value); App.saveCostCodeField('${c.id}')"></td>
+      <td>
+        <select onchange="App.updateCostCodeField('${c.id}','defaultCostType', this.value); App.saveCostCodeField('${c.id}')">
+          <option value="">None</option>
+          ${COST_TYPES.map(t => `<option value="${t}" ${t===c.defaultCostType?'selected':''}>${t}</option>`).join('')}
+        </select>
+      </td>
+      <td><input type="text" value="${esc(c.defaultUnit)}" placeholder="each" style="max-width:100px;"
+          onchange="App.updateCostCodeField('${c.id}','defaultUnit', this.value); App.saveCostCodeField('${c.id}')"></td>
+      <td class="col-action"><button class="btn btn-danger btn-small" onclick="App.removeCostCode('${c.id}')">✕</button></td>
+    </tr>`).join('');
+
+  return `
+  <div class="back-link" onclick="App.goList()">&larr; Back to all deals</div>
+  <div class="panel">
+    <h2>Cost Code Library</h2>
+    <p class="attach-hint">Shared across every deal — attach a code to a Cost Breakdown line item to auto-fill its description and cost type. Each field auto-saves when you click away.</p>
+    <div class="table-scroll">
+    <table class="items">
+      <thead><tr><th>Code</th><th class="col-desc">Name</th><th>Category</th><th>Default Cost Type</th><th>Default Unit</th><th class="col-action"></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    </div>
+  </div>
+  <div class="panel">
+    <h2>Add Cost Code</h2>
+    <div class="field-grid">
+      <div><label class="field-label">Code</label>
+        <input type="text" id="new-cost-code-code" placeholder="e.g. 3010"></div>
+      <div><label class="field-label">Name</label>
+        <input type="text" id="new-cost-code-name" placeholder="e.g. Installer Labor"></div>
+      <div><label class="field-label">Category</label>
+        <input type="text" id="new-cost-code-category" placeholder="e.g. Installation"></div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-primary" onclick="App.addCostCode()">Add Cost Code</button>
+    </div>
+  </div>`;
+}
+
 // Fence-product takeoff calculator: rail systems (Woodcrete Rail) are taken
 // off by rail count, every other style is a stacked precast panel fence
 // taken off by height. See the on-page "Estimation Methodology" panel for
@@ -4852,6 +5086,10 @@ async function initApp() {
   }
   await subscribeToTemplatesOnce();
   await subscribeToMaterialPricingOnce();
+  if (window.__firebaseSeedCostCodes) {
+    try { await window.__firebaseSeedCostCodes(); } catch (e) { console.error('Cost code seed failed:', e); }
+  }
+  await subscribeToCostCodesOnce();
   render();
 }
 
