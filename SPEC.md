@@ -364,3 +364,28 @@ live sheet cells won't confuse you:
   Outstanding. The modal also locks background scroll while open (matches
   the tab-settings modal) and widened to `max-width: 620px` for this mode's
   extra fields.
+- **Collected and Outstanding are now directly editable per deal row**, same
+  inline-cell mechanism as Freight/Tax/Material. Since Outstanding is never
+  stored (it's always `amount − collected`), editing the Outstanding cell
+  backs out the equivalent Collected value (`collected = amount −
+  enteredOutstanding`) and saves that instead — the two fields stay in
+  lockstep and every downstream total (month aggregates, YTD, Materials,
+  Pipeline) recomputes from the same single `collected` override, the same
+  way Freight/Tax already flow through. This is a direct correction on the
+  deal's own origin month only — it does not log a dated collection-log
+  entry the way the "Record Payment" flow does, so use Record Payment when
+  cash needs to be attributed to a specific month it arrived in, and inline
+  edit when correcting the deal's own figures.
+- **Editing is now gated to admins and approvers**, reusing the exact same
+  login identity as the Deal Approval Board (`index.html`): this page
+  read-only-subscribes to the same Firestore `users` collection (account
+  creation/editing stays exclusively in index.html's Manage Users screen)
+  and reads/writes the same `apc_current_user_id` localStorage key, so a
+  login on either page is already recognized on the other (same origin).
+  `isAdminUser(user)` mirrors index.html's check exactly (`role === 'admin'
+  || role === 'approver'`). Viewing the report never requires logging in —
+  only inline edits (Material/Freight/Tax/Collected/Outstanding), the Add
+  Deal/Record Payment modal, and the Upload tab's upload/save/delete and
+  collection-log actions are hidden for non-admins — and re-checked again
+  inside the mutating `App.*` methods themselves as a backstop. Same trust
+  model as the rest of this app: a named PIN check, not real authentication.
