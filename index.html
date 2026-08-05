@@ -1132,6 +1132,7 @@
         { id: 'cc_4000', code: '4000', name: 'Housing/Airbnb/Hotel', category: 'Mobilization', defaultCostType: 'Other', defaultUnit: 'each' },
         { id: 'cc_4010', code: '4010', name: 'Per Diem', category: 'Mobilization', defaultCostType: 'Other', defaultUnit: 'each' },
         { id: 'cc_4020', code: '4020', name: 'Drive Time', category: 'Mobilization', defaultCostType: 'Labor', defaultUnit: 'each' },
+        { id: 'cc_5000', code: '5000', name: 'COGS', category: '', defaultCostType: 'Other', defaultUnit: 'each' },
         { id: 'cc_5009', code: '5009', name: 'Precast Wall', category: 'Precast Concrete Wall', defaultCostType: 'Other', defaultUnit: 'LF' },
         { id: 'cc_5010', code: '5010', name: 'Freight', category: 'Precast Concrete Wall', defaultCostType: 'Subcontractor', defaultUnit: 'each' },
         { id: 'cc_5020', code: '5020', name: 'Tax', category: 'Precast Concrete Wall', defaultCostType: 'Other', defaultUnit: 'each' },
@@ -1220,7 +1221,7 @@
             item('Per Diem', 'cc_4010', 'each', 'Other', 25)
           ]),
           section('Precast Concrete Wall Product', [
-            item('American Precast Concrete Wall System', 'cc_5009', 'LF', 'Other', 0),
+            item('American Precast Concrete Wall System', 'cc_5000', 'each', 'Other', 0),
             item('American Precast Concrete Wall System', 'cc_5020', 'each', 'Other', 0),
             item('American Precast Concrete Wall System Delivery', 'cc_5010', 'each', 'Subcontractor', 0)
           ]),
@@ -3858,6 +3859,25 @@ const App = {
     }
   },
 
+  // Lets a rep swap in a different template after landing on the form —
+  // "+ New Deal" already auto-applies Main Template, this is for switching
+  // to another one or reloading it after making changes.
+  loadDealTemplateFromSelect() {
+    const select = document.getElementById('choose-template-select');
+    const templateId = select && select.value;
+    if (!templateId) { alert('Pick a template first.'); return; }
+    const template = dealTemplates.find(t => t.id === templateId);
+    if (!template) return;
+    const hasContent = draftDeal.sections.some(s => s.items.length > 0);
+    if (hasContent && !confirm('Replace the current Cost Breakdown with "' + template.name + '"? Any unsaved line items will be lost.')) return;
+    draftDeal.sections = template.sections.map(sec => ({
+      id: uid('sec'),
+      name: sec.name,
+      items: sec.items.map(item => ({ ...item, id: uid('item') }))
+    }));
+    render();
+  },
+
   updateDealTemplateField(templateId, field, value) {
     if (!currentUser) return;
     const t = dealTemplates.find(x => x.id === templateId);
@@ -4047,6 +4067,15 @@ function renderForm() {
       </label>
       <span class="attach-hint">Upload a cost estimate export (.xls/.xlsx) to auto-fill the cost breakdown below. Customer info still needs to be entered manually.</span>
     </div>
+    ${dealTemplates.length ? `
+    <div class="attach-btn-row" style="margin-top:10px;">
+      <select id="choose-template-select" style="max-width:260px;">
+        <option value="">Choose a template...</option>
+        ${dealTemplates.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}
+      </select>
+      <button class="btn btn-outline btn-small" onclick="App.loadDealTemplateFromSelect()">Load Template</button>
+      <span class="attach-hint">Replaces the Cost Breakdown below with the picked template's sections and line items.</span>
+    </div>` : ''}
   </div>
 
   <div class="panel">
