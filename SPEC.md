@@ -303,6 +303,18 @@ live sheet cells won't confuse you:
   *every* month (baked or uploaded) whenever there's no manual override, so
   logging a new collection that pushes a month's Total Collected across the
   threshold updates that month's commission automatically.
+- **A blank/missing Collected value means "fully collected" (Collected ==
+  Amount), not $0 collected** — confirmed against July 2026's real row data:
+  the sheet's Outstanding total for that month ($8,339.80) is exactly one
+  deal's Amount − Collected (the only row with an explicit, smaller Collected
+  value); every row with a blank Collected cell contributed $0 to Outstanding.
+  §2's `outstanding(r) = r.amount - r.collected` is still correct **once
+  `r.collected` defaults to `r.amount` for a blank cell** — that default
+  wasn't spelled out in §1/§2 and is worth stating explicitly for anyone
+  implementing this from scratch. `computeMonthMetrics` and the upload
+  parser both apply it (the parser preserves `null` for a genuinely blank
+  cell rather than coercing it to 0, so the default resolves correctly
+  downstream).
 - **Outstanding Collected** for an uploaded month is `SUMIF(stage =
   PAYMENT_COLLECTED, collected)` from that month's own uploaded rows, **plus**
   any manually-logged Collections — the two are additive, not exclusive.
