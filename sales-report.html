@@ -684,24 +684,42 @@ function legendRow(items) {
 // `live` and is layered on top at render time.
 // ---------------------------------------------------------------------------
 
-// Deal Amount / Revenue / Outstanding relationship, confirmed against the
-// source workbook's own pre-computed rows: Revenue = Deal Amount − Outstanding
-// (a deal can be "closed won" for its full Amount while only part of that is
-// recognized as Revenue this month). Avg Deal Size = Revenue ÷ Deals.
+// Config values the source workbook hardcodes in ~20 formulas — see SPEC.md §1.
+const COMMISSION_RATE = 0.005;
+const COMMISSION_THRESHOLD = 250000;
+
+// All-or-nothing gate, NOT prorated and NOT applied to only the excess — see
+// SPEC.md §3. Applied uniformly to every month (baked or uploaded) as the
+// live default, so logging a new collection that pushes a month's Total
+// Collected across the threshold updates that month's commission too.
+function commissionFor(totalCollected) {
+  return totalCollected >= COMMISSION_THRESHOLD ? totalCollected * COMMISSION_RATE : 0;
+}
+
+// SPEC.md §3: Outstanding is always DERIVED (Amount − Collected), never
+// trusted from a stored/uploaded column. Avg Deal Size = Deal Amount ÷
+// Deals (not Revenue ÷ Deals — those coincide only when a month has zero
+// Outstanding). Smallest Deal excludes non-positive amounts.
 function computeMonthMetrics(deals) {
   const won = deals.filter(d => d.stage && d.stage.indexOf('Closed Won') === 0);
+  const paymentCollected = deals.filter(d => d.stage === 'Payment Collected');
   const dealAmount = won.reduce((s, d) => s + (Number(d.amount) || 0), 0);
-  const outstanding = won.reduce((s, d) => s + (Number(d.outstanding) || 0), 0);
+  const outstanding = won.reduce((s, d) => s + ((Number(d.amount) || 0) - (Number(d.collected) || 0)), 0);
   const revenue = dealAmount - outstanding;
   const dealsCount = won.length;
-  const avgDealSize = dealsCount ? revenue / dealsCount : 0;
   const amounts = won.map(d => Number(d.amount) || 0);
+  const positiveAmounts = amounts.filter(a => a > 0);
+  // Outstanding Collected for a month = SUMIF(stage = Payment Collected,
+  // collected) among that month's own rows — see SPEC.md §3. This is
+  // additive with any manually-logged Collections, not a replacement for them.
+  const outstandingCollectedFromRows = paymentCollected.reduce((s, d) => s + (Number(d.collected) || 0), 0);
   return {
     dealAmount, revenue, outstanding,
     deals: dealsCount,
-    avgDealSize,
+    avgDealSize: dealsCount ? dealAmount / dealsCount : 0,
     largestDeal: amounts.length ? Math.max(...amounts) : 0,
-    smallestDeal: amounts.length ? Math.min(...amounts) : 0,
+    smallestDeal: positiveAmounts.length ? Math.min(...positiveAmounts) : 0,
+    outstandingCollectedFromRows,
   };
 }
 
@@ -726,16 +744,16 @@ function effectiveMonthly(year) {
     const monthKey = monthKeyOf(mn, year);
     const baked = base.monthly[i];
     const ov = live.overrides[monthKey] || {};
-    const commission = ov.commission != null ? ov.commission : baked.commission;
     const outstanding = ov.outstanding != null ? ov.outstanding : baked.outstanding;
     const outstandingCollected = baked.outstandingCollected + collectionsSumFor(monthKey);
+    const totalCollected = baked.revenue + outstandingCollected;
+    const commission = ov.commission != null ? ov.commission : commissionFor(totalCollected);
     months.push({
       month: monthKey, monthLabel: mn, isUploaded: false,
       dealAmount: baked.dealAmount, revenue: baked.revenue,
       deals: baked.deals, avgDealSize: baked.avgDealSize,
       largestDeal: baked.largestDeal, smallestDeal: baked.smallestDeal,
-      commission, outstanding, outstandingCollected,
-      totalCollected: baked.revenue + outstandingCollected,
+      commission, outstanding, outstandingCollected, totalCollected,
     });
   });
 
@@ -743,16 +761,16 @@ function effectiveMonthly(year) {
     const upload = live.uploads[monthKey];
     const metrics = computeMonthMetrics(upload.deals || []);
     const ov = live.overrides[monthKey] || {};
-    const commission = ov.commission != null ? ov.commission : metrics.revenue * 0.005;
     const outstanding = ov.outstanding != null ? ov.outstanding : metrics.outstanding;
-    const outstandingCollected = collectionsSumFor(monthKey);
+    const outstandingCollected = metrics.outstandingCollectedFromRows + collectionsSumFor(monthKey);
+    const totalCollected = metrics.revenue + outstandingCollected;
+    const commission = ov.commission != null ? ov.commission : commissionFor(totalCollected);
     months.push({
       month: monthKey, monthLabel: monthNameOf(monthKey), isUploaded: true,
       dealAmount: metrics.dealAmount, revenue: metrics.revenue,
       deals: metrics.deals, avgDealSize: metrics.avgDealSize,
       largestDeal: metrics.largestDeal, smallestDeal: metrics.smallestDeal,
-      commission, outstanding, outstandingCollected,
-      totalCollected: metrics.revenue + outstandingCollected,
+      commission, outstanding, outstandingCollected, totalCollected,
     });
   });
 
@@ -788,16 +806,23 @@ function effectiveYearData(year) {
   materials.forEach(m => { m.pct = materialsAmountTotal ? m.amount / materialsAmountTotal : 0; });
   const materialsTotal = ['TOTAL', materialsDealsTotal, materialsAmountTotal, 1];
 
+  // SPEC.md §4 — YTD Avg Deal Size is recomputed from YTD aggregates (Deal
+  // Amount ÷ Deals), NOT an average of the monthly averages. YTD Commission
+  // is the SUM of monthly commissions (the $250K gate is per-month and is
+  // never re-applied to the yearly total — a month under threshold
+  // permanently contributes $0, even if the year clears it). Smallest Deal
+  // excludes non-positive amounts.
   const wonAmounts = deals.filter(d => d.stage && d.stage.indexOf('Closed Won') === 0).map(d => Number(d.amount) || 0);
+  const positiveWonAmounts = wonAmounts.filter(a => a > 0);
   const totals = monthly.reduce((acc, m) => {
     acc.dealAmount += m.dealAmount; acc.revenue += m.revenue; acc.deals += m.deals;
     acc.commission += m.commission; acc.outstanding += m.outstanding;
     acc.outstandingCollected += m.outstandingCollected; acc.totalCollected += m.totalCollected;
     return acc;
   }, { dealAmount: 0, revenue: 0, deals: 0, commission: 0, outstanding: 0, outstandingCollected: 0, totalCollected: 0 });
-  totals.avgDealSize = totals.deals ? totals.revenue / totals.deals : 0;
+  totals.avgDealSize = totals.deals ? totals.dealAmount / totals.deals : 0;
   totals.largestDeal = wonAmounts.length ? Math.max(...wonAmounts) : 0;
-  totals.smallestDeal = wonAmounts.length ? Math.min(...wonAmounts) : 0;
+  totals.smallestDeal = positiveWonAmounts.length ? Math.min(...positiveWonAmounts) : 0;
 
   return { year, monthNames, monthly, totals, deals, materials, materialsTotal };
 }
@@ -955,6 +980,7 @@ function renderOverview() {
     <h2>Monthly Detail</h2>
     <p class="panel-sub">Commission and Outstanding are editable — click a cell to set a manual value for that month.</p>
     <div class="table-scroll">${monthlyGridTable(yd)}</div>
+    <div class="footnote">Commission is an all-or-nothing gate: ${pct(COMMISSION_RATE, 1)} of Total Collected for the month, but only once Total Collected reaches ${moneyCompact(COMMISSION_THRESHOLD)} — a month just under that line earns $0, not a prorated amount. It recalculates automatically as Total Collected changes (e.g. from a logged collection); edit the cell directly only to override it.</div>
   </div>
   <div class="panel">
     <h2>Outstanding vs Collected</h2>
@@ -1165,6 +1191,17 @@ function renderDealsOnly() {
   }
 }
 
+// SPEC.md §5: Created is cohorted by create date, Won/Lost by close date, so
+// a month can close more than it created — the MAX(0, …) floor on Pending
+// then reads as "0 pending" when it actually means "cohort mismatch,
+// unrelated to this month's real pipeline". Surface that distinction instead
+// of a bare, misleading 0.
+function pendingCell(a, key) {
+  const isMismatch = a.pending === 0 && (a.won + a.lost) > a.dealsCreated;
+  if (isMismatch) return `<span title="Won + Lost exceeds Deals Created this month — cohorts don't line up, not literally zero pipeline.">n/a*</span>`;
+  return key === 'count' ? num(a.pending) : moneyCompact(a.pendingAmount);
+}
+
 function renderPipeline() {
   const p = SALES_DATA.pipeline;
   const s = p.snapshot;
@@ -1227,12 +1264,12 @@ function renderPipeline() {
             <td class="num">${num(a.dealsCreated)}</td>
             <td class="num">${num(a.won)}</td>
             <td class="num">${num(a.lost)}</td>
-            <td class="num">${num(a.pending)}</td>
+            <td class="num">${pendingCell(a, 'count')}</td>
             <td class="num">${pct(a.winRate)}</td>
             <td class="num">${moneyCompact(a.pipelineAmount)}</td>
             <td class="num">${money(a.wonAmount)}</td>
             <td class="num">${moneyCompact(a.lostAmount)}</td>
-            <td class="num">${moneyCompact(a.pendingAmount)}</td>
+            <td class="num">${pendingCell(a, 'amount')}</td>
           </tr>`).join('')}
           ${p.activityTotal ? `<tr style="font-weight:700">
             <td>Total</td>
@@ -1250,6 +1287,7 @@ function renderPipeline() {
       </table>
     </div>
     ${p.activityNote ? `<div class="footnote">${esc(p.activityNote)}</div>` : ''}
+    ${p.activityByMonth.some(a => a.pending === 0 && (a.won + a.lost) > a.dealsCreated) ? `<div class="footnote">* n/a = cohort mismatch (Won + Lost exceeded Deals Created that month, since Won/Lost are cohorted by close date but Created is by create date) — not literally zero pending pipeline.</div>` : ''}
   </div>`;
 }
 
@@ -1266,7 +1304,6 @@ const COLUMN_ALIASES = {
   owner: ['deal owner', 'owner'],
   collected: ['collected'],
   material: ['material type', 'material'],
-  outstanding: ['outstanding'],
   recordId: ['record id', 'id'],
 };
 
@@ -1311,7 +1348,6 @@ function mapUploadRows(rows) {
       owner: (colIndex.owner != null && row[colIndex.owner]) ? String(row[colIndex.owner]).trim() : null,
       collected: colIndex.collected != null ? parseMoneyCell(row[colIndex.collected]) : null,
       material: (colIndex.material != null && row[colIndex.material]) ? String(row[colIndex.material]).trim() : null,
-      outstanding: colIndex.outstanding != null ? parseMoneyCell(row[colIndex.outstanding]) : null,
     });
   }
   return { deals, warnings };
@@ -1357,7 +1393,7 @@ function renderUpload() {
   ${renderStorageBanner()}
   <div class="panel">
     <h2>Upload Closed Deals</h2>
-    <p class="panel-sub">Upload a spreadsheet of closed deals for a month that isn't already baked into this report (e.g. the current month, as it happens). Recognized columns (any order): Deal Name, Close Date, Amount, Material Type, Deal Owner, Stage (optional — defaults to Closed Won), Collected, Outstanding (both optional).</p>
+    <p class="panel-sub">Upload a spreadsheet of closed deals for a month that isn't already baked into this report (e.g. the current month, as it happens). Recognized columns (any order): Deal Name, Close Date, Amount, Material Type, Deal Owner, Stage (optional — defaults to Closed Won; rows marked "Payment Collected" count toward that month's Outstanding Collected instead of a new deal), Collected (optional). Outstanding is always calculated as Amount − Collected, never read from the file.</p>
     <div class="form-grid">
       <div>
         <label>Year</label>
