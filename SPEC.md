@@ -389,3 +389,16 @@ live sheet cells won't confuse you:
   collection-log actions are hidden for non-admins — and re-checked again
   inside the mutating `App.*` methods themselves as a backstop. Same trust
   model as the rest of this app: a named PIN check, not real authentication.
+- **Tab customization (order/labels/hidden) is now shared, not per-browser.**
+  It used to live only in localStorage, which meant every admin/approver saw
+  their own device's default tab set instead of whatever the report had
+  actually been configured to show (e.g. Connor seeing "Deals" while
+  Richard's browser had it renamed to "Monthly Totals"). It's now also
+  stored as a `salesReportOverrides` document keyed `'__tabConfig'` (same
+  reused collection as everything else override-shaped, no new Firestore
+  Rules needed) — whenever that document arrives from Firestore it wins
+  over whatever's cached locally, so every viewer converges on the same tab
+  layout. localStorage is kept only as the pre-connect/offline cache.
+  Opening "Customize Tabs" itself is now gated to admins/approvers, since
+  changing it now changes what everyone sees, not just the editor's own
+  browser.

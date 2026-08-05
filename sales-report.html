@@ -386,7 +386,7 @@
       <button class="btn btn-ghost icon-btn" id="settings-btn" onclick="toggleSettingsMenu(event)" title="Settings">⚙️</button>
       <div class="settings-menu" id="settings-menu">
         <button class="settings-menu-item" id="theme-toggle-btn" onclick="toggleTheme()">🌙 Dark Mode</button>
-        <button class="settings-menu-item" onclick="closeSettingsMenu(); App.openTabSettings();">Customize Tabs</button>
+        <button class="settings-menu-item" id="customize-tabs-btn" onclick="closeSettingsMenu(); App.openTabSettings();">Customize Tabs</button>
       </div>
     </div>
   </div>
@@ -627,14 +627,17 @@ function isAdminUser(user) {
 
 function renderUserChrome() {
   const btn = document.getElementById('current-user-btn');
-  if (!btn) return;
-  if (currentUser) {
-    btn.textContent = `👤 ${currentUser.name}`;
-    btn.title = `Logged in as ${currentUser.name} (${currentUser.role}). Click to log out.`;
-  } else {
-    btn.textContent = '👤 Log In';
-    btn.title = 'Log in as an admin or approver to edit deal data';
+  if (btn) {
+    if (currentUser) {
+      btn.textContent = `👤 ${currentUser.name}`;
+      btn.title = `Logged in as ${currentUser.name} (${currentUser.role}). Click to log out.`;
+    } else {
+      btn.textContent = '👤 Log In';
+      btn.title = 'Log in as an admin or approver to edit deal data';
+    }
   }
+  const tabsBtn = document.getElementById('customize-tabs-btn');
+  if (tabsBtn) tabsBtn.style.display = isAdminUser(currentUser) ? '' : 'none';
 }
 
 function subscribeUsers() {
@@ -655,8 +658,12 @@ function subscribeUsers() {
 }
 
 // ---------------------------------------------------------------------------
-// Tab customization — order/labels/hidden, saved per-browser (this is a
-// personal display preference, not shared team data like the deal ledger).
+// Tab customization — order/labels/hidden. Shared across everyone who opens
+// the report (whoever an admin/approver sets it to is what every viewer
+// sees), stored the same way as Freight/Tax/Material: a document in the
+// generic salesReportOverrides collection, keyed '__tabConfig' instead of a
+// month or deal composite, so no new Firestore collection or Rules entry is
+// needed. localStorage is kept only as the pre-cloud-connect / offline cache.
 // ---------------------------------------------------------------------------
 const DEFAULT_TABS = [
   { id: 'overview', label: 'Overview' },
@@ -665,10 +672,9 @@ const DEFAULT_TABS = [
   { id: 'pipeline', label: 'Pipeline' },
   { id: 'upload', label: 'Upload' },
 ];
+const TAB_CONFIG_OVERRIDE_KEY = '__tabConfig';
 
-function loadTabs() {
-  let saved = null;
-  try { saved = JSON.parse(localStorage.getItem('sr_tabs') || 'null'); } catch (e) {}
+function normalizeTabs(saved) {
   if (!Array.isArray(saved)) return DEFAULT_TABS.map(t => ({ ...t, hidden: false }));
   // Merge saved order/labels/hidden with the known tab ids — drops any
   // stale id from an older version, appends any new one at the end.
@@ -679,8 +685,16 @@ function loadTabs() {
   DEFAULT_TABS.forEach(t => { if (!merged.some(m => m.id === t.id)) merged.push({ ...t, hidden: false }); });
   return merged;
 }
+function loadTabs() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem('sr_tabs') || 'null'); } catch (e) {}
+  return normalizeTabs(saved);
+}
 function saveTabs() {
   try { localStorage.setItem('sr_tabs', JSON.stringify(state.tabs)); } catch (e) {}
+  if (live.mode === 'cloud' && window.__srSaveOverride) {
+    window.__srSaveOverride(TAB_CONFIG_OVERRIDE_KEY, 'tabs', state.tabs);
+  }
 }
 
 const state = {
@@ -1339,7 +1353,20 @@ async function initLiveData() {
   };
   window.__srSubscribeUploads((data) => { live.uploads = data; uploadsOk = true; maybeGoCloud(); render(); }, onErr);
   window.__srSubscribeCollections((data) => { live.collections = data; collectionsOk = true; maybeGoCloud(); render(); }, onErr);
-  window.__srSubscribeOverrides((data) => { live.overrides = data; overridesOk = true; maybeGoCloud(); render(); }, onErr);
+  window.__srSubscribeOverrides((data) => {
+    live.overrides = data;
+    overridesOk = true;
+    maybeGoCloud();
+    // Tab layout is shared, not per-browser — whatever the cloud copy says
+    // wins over whatever's cached locally, so every viewer converges on the
+    // same tabs an admin/approver set.
+    const sharedTabConfig = data[TAB_CONFIG_OVERRIDE_KEY];
+    if (sharedTabConfig && Array.isArray(sharedTabConfig.tabs)) {
+      state.tabs = normalizeTabs(sharedTabConfig.tabs);
+      try { localStorage.setItem('sr_tabs', JSON.stringify(state.tabs)); } catch (e) {}
+    }
+    render();
+  }, onErr);
   subscribeUsers();
 }
 
@@ -2377,6 +2404,7 @@ const App = {
   },
 
   openTabSettings() {
+    if (!isAdminUser(currentUser)) { App.openLogin(); return; }
     document.getElementById('tab-settings-overlay').classList.add('open');
     document.body.style.overflow = 'hidden';
     renderTabSettingsList();
@@ -2652,6 +2680,7 @@ function populatePaymentDealOptions(preselectDealKey) {
 
 initTheme();
 setupChartTooltips();
+renderUserChrome();
 render();
 initLiveData();
 </script>
