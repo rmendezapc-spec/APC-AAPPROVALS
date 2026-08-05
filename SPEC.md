@@ -402,3 +402,13 @@ live sheet cells won't confuse you:
   Opening "Customize Tabs" itself is now gated to admins/approvers, since
   changing it now changes what everyone sees, not just the editor's own
   browser.
+- **July 2026's Freight/Tax figures are now baked in from the actual
+  spreadsheet** (all 33 rows), not left blank for manual entry. Freight/Tax
+  now follow the same base-value-plus-override pattern as Collected/Material
+  (`effectiveDealFreight`/`effectiveDealTax`: a manual override on that deal
+  wins, otherwise fall back to the deal's own `freight`/`tax` field baked
+  into the data) instead of only ever existing as a blank override — a
+  manual edit in the Deals tab still corrects it per deal exactly as before.
+  July's Monthly Total Freight is $20,550.00 and Tax is $16,794.41 against
+  the real per-row source figures (McGraw & Sons: $1,950/$1,110.50; All Pro
+  Cleaning (Payment Collected row): $4,800/$2,507.17; etc.).
