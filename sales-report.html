@@ -138,6 +138,44 @@
 
   .icon-btn { width: 38px; height: 38px; padding: 0; display: flex; align-items: center; justify-content: center; font-size: 16px; }
 
+  .settings-wrap { position: relative; }
+  .settings-menu {
+    display: none; position: absolute; top: calc(100% + 8px); right: 0; min-width: 200px;
+    background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius);
+    box-shadow: var(--shadow-md); padding: 8px; flex-direction: column; gap: 2px; z-index: 20;
+  }
+  .settings-menu.open { display: flex; }
+  .settings-menu-item {
+    display: block; width: 100%; text-align: left; background: transparent; border: none;
+    color: var(--ink); font-family: var(--sans); font-size: 14px; font-weight: 600;
+    padding: 9px 10px; border-radius: 8px; cursor: pointer;
+  }
+  .settings-menu-item:hover { background: var(--panel-alt); }
+
+  .modal-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(10,15,20,0.55); z-index: 60;
+    align-items: center; justify-content: center; padding: 20px;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal-card {
+    background: var(--paper); border-radius: var(--radius); box-shadow: var(--shadow-lg);
+    padding: 22px 24px; max-width: 480px; width: 100%; max-height: 82vh; overflow-y: auto;
+  }
+  .modal-card h3 { margin: 0 0 4px; font-size: 16px; }
+  .modal-actions { display: flex; justify-content: space-between; gap: 10px; margin-top: 16px; }
+  .tab-settings-row {
+    display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--row-border);
+  }
+  .tab-settings-row .order-btns { display: flex; flex-direction: column; gap: 1px; }
+  .tab-settings-row .order-btns button {
+    width: 22px; height: 18px; line-height: 1; font-size: 10px; padding: 0;
+    border: 1px solid var(--line); background: var(--paper); color: var(--ink); border-radius: 3px; cursor: pointer;
+  }
+  .tab-settings-row .order-btns button:disabled { opacity: 0.3; cursor: not-allowed; }
+  .tab-settings-row input[type=text] { flex: 1; min-width: 0; }
+  .tab-settings-row label.hide-toggle { display: flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+  .tab-settings-row label.hide-toggle input { width: 15px; height: 15px; cursor: pointer; }
+
   main { max-width: min(1400px, 97vw); margin: 0 auto; padding: 24px 28px 80px; }
 
   .tabs { display: flex; gap: 6px; margin-bottom: 20px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
@@ -230,6 +268,20 @@
   table.report .stage-payment { background: var(--amber-soft); color: var(--amber); }
   table.report .stage-other { background: var(--panel-alt); color: var(--muted); }
 
+  table.report tr.month-group-header td {
+    background: #1F3864; color: #fff; font-weight: 700; font-size: 12px;
+    text-transform: uppercase; letter-spacing: 0.4px; padding: 8px 10px;
+  }
+  table.report tr.month-group-header .gap-flag {
+    margin-left: 10px; font-weight: 600; text-transform: none; letter-spacing: normal;
+    color: #ffd699; font-size: 11.5px; cursor: help;
+  }
+  table.report tr.month-group-total td {
+    background: var(--panel-alt); font-weight: 700; font-family: var(--mono);
+    border-bottom: 2px solid var(--line);
+  }
+  table.report tr.month-group-total td:first-child { font-family: var(--sans); }
+
   .mat-bar-row { display: grid; grid-template-columns: 130px 1fr 90px; align-items: center; gap: 10px; margin-bottom: 8px; font-size: 13px; }
   .mat-bar-row .mat-name { text-align: right; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .mat-bar-track { background: var(--panel-alt); border-radius: 3px; overflow: hidden; height: 16px; }
@@ -293,13 +345,31 @@
   <div class="nav">
     <div class="year-toggle" id="year-toggle"></div>
     <a class="btn btn-ghost" href="index.html">Deal Board &rarr;</a>
-    <button class="btn btn-ghost icon-btn" id="theme-toggle-btn" onclick="toggleTheme()" title="Toggle theme">🌙</button>
+    <div class="settings-wrap">
+      <button class="btn btn-ghost icon-btn" id="settings-btn" onclick="toggleSettingsMenu(event)" title="Settings">⚙️</button>
+      <div class="settings-menu" id="settings-menu">
+        <button class="settings-menu-item" id="theme-toggle-btn" onclick="toggleTheme()">🌙 Dark Mode</button>
+        <button class="settings-menu-item" onclick="closeSettingsMenu(); App.openTabSettings();">Customize Tabs</button>
+      </div>
+    </div>
   </div>
 </header>
 
 <main id="main"></main>
 
 <div id="chart-tip"></div>
+
+<div id="tab-settings-overlay" class="modal-overlay" onclick="if (event.target === this) App.closeTabSettings();">
+  <div class="modal-card">
+    <h3>Customize Tabs</h3>
+    <p class="panel-sub">Reorder, rename, or hide tabs. Saved on this device.</p>
+    <div id="tab-settings-list"></div>
+    <div class="modal-actions">
+      <button class="btn btn-outline btn-small" onclick="App.resetTabs()">Reset to Defaults</button>
+      <button class="btn btn-primary" onclick="App.closeTabSettings()">Done</button>
+    </div>
+  </div>
+</div>
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.17.0/firebase-app.js";
@@ -414,8 +484,38 @@ const SALES_DATA = {"generatedFrom": "Monthly_Sales_Report.xlsx", "years": {"202
 const YEARS = Object.keys(SALES_DATA.years).sort();
 const MONTH_NAMES = ['JANUARY','FEBRUARY','MARCH','APRIL','MAY','JUNE','JULY','AUGUST','SEPTEMBER','OCTOBER','NOVEMBER','DECEMBER'];
 
+// ---------------------------------------------------------------------------
+// Tab customization — order/labels/hidden, saved per-browser (this is a
+// personal display preference, not shared team data like the deal ledger).
+// ---------------------------------------------------------------------------
+const DEFAULT_TABS = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'materials', label: 'Materials' },
+  { id: 'deals', label: 'Deals' },
+  { id: 'pipeline', label: 'Pipeline' },
+  { id: 'upload', label: 'Upload' },
+];
+
+function loadTabs() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem('sr_tabs') || 'null'); } catch (e) {}
+  if (!Array.isArray(saved)) return DEFAULT_TABS.map(t => ({ ...t, hidden: false }));
+  // Merge saved order/labels/hidden with the known tab ids — drops any
+  // stale id from an older version, appends any new one at the end.
+  const byId = new Map(DEFAULT_TABS.map(t => [t.id, t]));
+  const merged = saved.filter(t => byId.has(t.id)).map(t => ({
+    id: t.id, label: t.label || byId.get(t.id).label, hidden: !!t.hidden,
+  }));
+  DEFAULT_TABS.forEach(t => { if (!merged.some(m => m.id === t.id)) merged.push({ ...t, hidden: false }); });
+  return merged;
+}
+function saveTabs() {
+  try { localStorage.setItem('sr_tabs', JSON.stringify(state.tabs)); } catch (e) {}
+}
+
 const state = {
   year: YEARS[YEARS.length - 1],
+  tabs: loadTabs(),
   tab: 'overview',
   monthView: 'all',
   dealSearch: '',
@@ -430,6 +530,10 @@ const state = {
   collAmount: '',
   collNote: '',
 };
+if (!state.tabs.some(t => t.id === state.tab && !t.hidden)) {
+  const firstVisible = state.tabs.find(t => !t.hidden);
+  if (firstVisible) state.tab = firstVisible.id;
+}
 
 // live.mode: 'connecting' | 'cloud' | 'local' (Firebase unreachable/denied —
 // falls back to this browser's localStorage only, see loadLocalFallback()).
@@ -524,7 +628,7 @@ function toggleTheme() {
 function applyTheme(theme) {
   document.body.classList.toggle('dark', theme === 'dark');
   const btn = document.getElementById('theme-toggle-btn');
-  if (btn) btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+  if (btn) btn.textContent = theme === 'dark' ? '☀️ Light Mode' : '🌙 Dark Mode';
 }
 function initTheme() {
   let theme = 'light';
@@ -535,6 +639,21 @@ function initTheme() {
   } catch (e) {}
   applyTheme(theme);
 }
+
+// ---------------------------------------------------------------------------
+// Settings menu (gear icon in the header)
+// ---------------------------------------------------------------------------
+function toggleSettingsMenu(e) {
+  if (e) e.stopPropagation();
+  document.getElementById('settings-menu').classList.toggle('open');
+}
+function closeSettingsMenu() {
+  document.getElementById('settings-menu').classList.remove('open');
+}
+document.addEventListener('click', (e) => {
+  const wrap = document.querySelector('.settings-wrap');
+  if (wrap && !wrap.contains(e.target)) closeSettingsMenu();
+});
 
 // ---------------------------------------------------------------------------
 // Chart tooltip (shared, delegated)
@@ -899,15 +1018,8 @@ function renderYearToggle() {
 }
 
 function renderTabs() {
-  const tabs = [
-    ['overview', 'Overview'],
-    ['materials', 'Materials'],
-    ['deals', 'Deals'],
-    ['pipeline', 'Pipeline'],
-    ['upload', 'Upload'],
-  ];
-  return `<div class="tabs">${tabs.map(([id, label]) =>
-    `<button class="tab ${state.tab === id ? 'active' : ''}" onclick="App.goTab('${id}')">${label}</button>`
+  return `<div class="tabs">${state.tabs.filter(t => !t.hidden).map(t =>
+    `<button class="tab ${state.tab === t.id ? 'active' : ''}" onclick="App.goTab('${t.id}')">${esc(t.label)}</button>`
   ).join('')}</div>`;
 }
 
@@ -1119,20 +1231,17 @@ function renderDeals() {
     return `<th class="${sorted ? 'sorted' : ''}" data-sort-key="${key2}">${label}<span class="arrow">${arrow}</span></th>`;
   };
 
-  // If a KPI number for this month (e.g. Deals Closed) was corrected by hand
-  // ahead of having every underlying deal row, this ledger will legitimately
-  // undercount against it — surface that gap instead of leaving it silently
-  // inconsistent.
-  let ledgerGapNote = '';
-  if (state.dealMonth !== 'all') {
-    const monthRow = yd.monthly.find(m => m.month === state.dealMonth);
-    if (monthRow) {
-      const ledgerWonCount = yd.deals.filter(d => d.month === state.dealMonth && d.stage && d.stage.indexOf('Closed Won') === 0).length;
-      if (ledgerWonCount !== monthRow.deals) {
-        ledgerGapNote = `<div class="footnote">Heads up: this month's KPI total says ${num(monthRow.deals)} deals, but only ${num(ledgerWonCount)} are listed below — the deal-by-deal ledger for this month is incomplete relative to the summary numbers.</div>`;
-      }
-    }
-  }
+  // Group by month, like the source spreadsheet's per-month blocks —
+  // preserving each month's internal ordering from the sort/filter above,
+  // and the months themselves in chronological order.
+  const groupIndex = new Map();
+  rows.forEach(d => {
+    if (!groupIndex.has(d.month)) groupIndex.set(d.month, []);
+    groupIndex.get(d.month).push(d);
+  });
+  const groups = Array.from(groupIndex.keys())
+    .sort((a, b) => monthSortValue(a) - monthSortValue(b))
+    .map(mk => ({ month: mk, rows: groupIndex.get(mk) }));
 
   return `
   <div class="panel">
@@ -1148,8 +1257,7 @@ function renderDeals() {
       </select>
       <span class="footnote">${rows.length} of ${yd.deals.length} rows</span>
     </div>
-    ${ledgerGapNote}
-    ${rows.length === 0 ? `<div class="empty-state">No deals match this search/filter.</div>` : `
+    ${groups.length === 0 ? `<div class="empty-state">No deals match this search/filter.</div>` : `
     <div class="table-scroll">
       <table class="report" id="deals-table">
         <thead><tr>
@@ -1162,19 +1270,37 @@ function renderDeals() {
           ${col('collected', 'Collected')}
         </tr></thead>
         <tbody>
-          ${rows.map(d => `<tr>
-            <td>${esc(d.name)}</td>
-            <td>${dateStr(d.closeDate)}</td>
-            <td>${stagePill(d.stage)}</td>
-            <td>${esc(d.material || '—')}</td>
-            <td>${esc(d.owner || '—')}</td>
-            <td class="num">${d.amount != null ? money(d.amount, 2) : '—'}</td>
-            <td class="num">${d.collected != null ? money(d.collected, 2) : '—'}</td>
-          </tr>`).join('')}
+          ${groups.map(g => dealGroupRows(g, yd)).join('')}
         </tbody>
       </table>
     </div>`}
   </div>`;
+}
+
+// One month's section: a banner row (flagging a KPI/ledger mismatch inline,
+// same check as before but visible per-group instead of only when filtered
+// to that single month), its deal rows, then a "MONTHLY TOTAL" row — mirrors
+// the source workbook's own per-month block layout.
+function dealGroupRows(group, yd) {
+  const monthRow = yd.monthly.find(m => m.month === group.month);
+  const wonRows = group.rows.filter(d => d.stage && d.stage.indexOf('Closed Won') === 0);
+  const wonAmount = wonRows.reduce((s, d) => s + (Number(d.amount) || 0), 0);
+  const gap = monthRow && wonRows.length !== monthRow.deals;
+  const gapFlag = gap
+    ? ` <span class="gap-flag" title="This month's KPI total says ${monthRow.deals} deals, but only ${wonRows.length} are listed here.">⚠ ${num(wonRows.length)} of ${num(monthRow.deals)} deals listed</span>`
+    : '';
+  let out = `<tr class="month-group-header"><td colspan="7">📅 ${esc(titleCaseMonth(group.month))}${gapFlag}</td></tr>`;
+  out += group.rows.map(d => `<tr>
+    <td>${esc(d.name)}</td>
+    <td>${dateStr(d.closeDate)}</td>
+    <td>${stagePill(d.stage)}</td>
+    <td>${esc(d.material || '—')}</td>
+    <td>${esc(d.owner || '—')}</td>
+    <td class="num">${d.amount != null ? money(d.amount, 2) : '—'}</td>
+    <td class="num">${d.collected != null ? money(d.collected, 2) : '—'}</td>
+  </tr>`).join('');
+  out += `<tr class="month-group-total"><td colspan="5">MONTHLY TOTAL (${num(wonRows.length)} deals)</td><td class="num">${money(wonAmount, 2)}</td><td></td></tr>`;
+  return out;
 }
 
 function wireDealControls() {
@@ -1531,6 +1657,34 @@ function renderUploadOnly() {
 }
 
 // ---------------------------------------------------------------------------
+// Tab customization modal
+// ---------------------------------------------------------------------------
+function renderTabSettingsList() {
+  const list = document.getElementById('tab-settings-list');
+  const n = state.tabs.length;
+  const visibleCount = state.tabs.filter(t => !t.hidden).length;
+  list.innerHTML = state.tabs.map((t, i) => `
+    <div class="tab-settings-row">
+      <div class="order-btns">
+        <button ${i === 0 ? 'disabled' : ''} onclick="App.moveTab(${i}, -1)" title="Move up">▲</button>
+        <button ${i === n - 1 ? 'disabled' : ''} onclick="App.moveTab(${i}, 1)" title="Move down">▼</button>
+      </div>
+      <input type="text" value="${esc(t.label)}" data-tab-id="${t.id}" class="tab-name-input">
+      <label class="hide-toggle">
+        <input type="checkbox" data-tab-id="${t.id}" ${t.hidden ? 'checked' : ''} ${(!t.hidden && visibleCount <= 1) ? 'disabled' : ''}>
+        Hidden
+      </label>
+    </div>
+  `).join('');
+  list.querySelectorAll('.tab-name-input').forEach(inp => {
+    inp.addEventListener('change', () => App.renameTab(inp.getAttribute('data-tab-id'), inp.value));
+  });
+  list.querySelectorAll('input[type=checkbox]').forEach(cb => {
+    cb.addEventListener('change', () => App.toggleTabHidden(cb.getAttribute('data-tab-id')));
+  });
+}
+
+// ---------------------------------------------------------------------------
 // App namespace + init
 // ---------------------------------------------------------------------------
 const App = {
@@ -1619,6 +1773,56 @@ const App = {
       live.overrides[monthKey] = { ...(live.overrides[monthKey] || {}), month: monthKey, [field]: parsed };
       saveLocalFallback();
     }
+    render();
+  },
+
+  openTabSettings() {
+    document.getElementById('tab-settings-overlay').classList.add('open');
+    renderTabSettingsList();
+  },
+  closeTabSettings() {
+    document.getElementById('tab-settings-overlay').classList.remove('open');
+  },
+  moveTab(index, dir) {
+    const target = index + dir;
+    if (target < 0 || target >= state.tabs.length) return;
+    const copy = state.tabs.slice();
+    const [moved] = copy.splice(index, 1);
+    copy.splice(target, 0, moved);
+    state.tabs = copy;
+    saveTabs();
+    renderTabSettingsList();
+    render();
+  },
+  renameTab(id, value) {
+    const label = value.trim();
+    const tab = state.tabs.find(t => t.id === id);
+    if (tab) tab.label = label || DEFAULT_TABS.find(t => t.id === id).label;
+    saveTabs();
+    renderTabSettingsList();
+    render();
+  },
+  toggleTabHidden(id) {
+    const tab = state.tabs.find(t => t.id === id);
+    if (!tab) return;
+    if (!tab.hidden) {
+      // about to hide it — never hide the last visible tab
+      const otherVisible = state.tabs.filter(t => t.id !== id && !t.hidden).length;
+      if (otherVisible === 0) { renderTabSettingsList(); return; }
+    }
+    tab.hidden = !tab.hidden;
+    if (tab.hidden && state.tab === id) {
+      const firstVisible = state.tabs.find(t => !t.hidden);
+      if (firstVisible) state.tab = firstVisible.id;
+    }
+    saveTabs();
+    renderTabSettingsList();
+    render();
+  },
+  resetTabs() {
+    state.tabs = DEFAULT_TABS.map(t => ({ ...t, hidden: false }));
+    saveTabs();
+    renderTabSettingsList();
     render();
   },
 };
