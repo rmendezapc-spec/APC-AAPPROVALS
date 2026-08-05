@@ -331,6 +331,19 @@
   .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 14px; align-items: end; }
   .form-grid label { display: block; font-size: 11px; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
 
+  .dupe-review-panel { background: var(--amber-soft); border-color: var(--amber); margin: 12px 0; }
+  .dupe-review-panel h2 { color: var(--amber); }
+  .dupe-review-row {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 10px 0; border-bottom: 1px solid rgba(0,0,0,0.08); font-size: 13px;
+  }
+  .dupe-review-row:last-child { border-bottom: none; }
+  .dupe-cols { display: flex; flex-direction: column; gap: 3px; }
+  .dupe-label { font-weight: 700; color: var(--ink-soft); }
+  .dupe-actions { display: flex; gap: 14px; white-space: nowrap; }
+  .dupe-actions label { display: flex; align-items: center; gap: 4px; font-size: 12.5px; cursor: pointer; }
+  .dupe-actions input[type=radio] { cursor: pointer; }
+
   @media (max-width: 640px) {
     main { padding: 18px 14px 60px; }
     .panel { padding: 16px 16px; }
@@ -598,6 +611,7 @@ const state = {
   collAmount: '',
   collNote: '',
   markCollectedKey: null,
+  uploadDupeDecisions: {},
 };
 if (!state.tabs.some(t => t.id === state.tab && !t.hidden)) {
   const firstVisible = state.tabs.find(t => !t.hidden);
@@ -1463,6 +1477,59 @@ function dealCollectionAdjustment(deals) {
   return adj;
 }
 
+// ---------------------------------------------------------------------------
+// Upload duplicate detection — when the same month gets uploaded more than
+// once as new deals close through the month, this decides which incoming
+// rows are genuinely new vs. already present, without silently guessing on
+// the ambiguous cases.
+// ---------------------------------------------------------------------------
+function normalizedDealName(name) {
+  return String(name || '').toLowerCase().trim().replace(/\s+/g, ' ');
+}
+
+// Record ID is the reliable identity HubSpot gives every deal — prefer it.
+// Rows without one (or hand-added ones) fall back to a name+date+amount
+// composite, which is reliable enough within a single month.
+function dealIdentity(d) {
+  if (d.recordId != null && String(d.recordId).trim() !== '') return 'id:' + String(d.recordId).trim();
+  return 'k:' + normalizedDealName(d.name) + '|' + (d.closeDate || '') + '|' + (Number(d.amount) || 0).toFixed(2);
+}
+
+function fuzzyDealKey(d) {
+  return normalizedDealName(d.name) + '|' + (Number(d.amount) || 0).toFixed(2);
+}
+
+// Compares newly-parsed rows against a month's already-saved deals.
+//  - exact identity match  -> definite duplicate, skipped automatically
+//  - same name+amount but different date/id -> "possible duplicate": most
+//    likely the same deal re-exported with a corrected date, or a genuine
+//    coincidence — flagged for a human decision rather than guessed at
+//  - anything else -> genuinely new
+function planDealMerge(existingDeals, newDeals) {
+  const seenIds = new Set(existingDeals.map(dealIdentity));
+  const byFuzzyKey = new Map();
+  existingDeals.forEach(d => {
+    const k = fuzzyDealKey(d);
+    if (!byFuzzyKey.has(k)) byFuzzyKey.set(k, []);
+    byFuzzyKey.get(k).push(d);
+  });
+
+  const toAdd = [];
+  const exactDuplicates = [];
+  const possibleDuplicates = []; // { deal, matches }
+
+  newDeals.forEach(d => {
+    const id = dealIdentity(d);
+    if (seenIds.has(id)) { exactDuplicates.push(d); return; }
+    const matches = byFuzzyKey.get(fuzzyDealKey(d));
+    if (matches && matches.length) { possibleDuplicates.push({ deal: d, matches }); return; }
+    toAdd.push(d);
+    seenIds.add(id); // catch a repeat of this same row later in the same file
+  });
+
+  return { toAdd, exactDuplicates, possibleDuplicates };
+}
+
 function getFilteredSortedDeals() {
   const yd = effectiveYearData(state.year);
   let rows = yd.deals.filter(d => {
@@ -1857,7 +1924,7 @@ function renderUpload() {
   ${renderStorageBanner()}
   <div class="panel">
     <h2>Upload Closed Deals</h2>
-    <p class="panel-sub">Upload a spreadsheet of closed deals for a month that isn't already baked into this report (e.g. the current month, as it happens). Recognized columns (any order): Deal Name, Close Date, Amount, Material Type, Deal Owner, Stage (optional — defaults to Closed Won; rows marked "Payment Collected" count toward that month's Outstanding Collected instead of a new deal), Collected (optional). Outstanding is always calculated as Amount − Collected, never read from the file.</p>
+    <p class="panel-sub">Upload a spreadsheet of closed deals for a month that isn't already baked into this report (e.g. the current month, as it happens). You can upload multiple files for the same month as more deals close — new deals merge in and duplicates are skipped automatically, matched by Record ID when the file has one. Recognized columns (any order): Deal Name, Close Date, Amount, Material Type, Deal Owner, Record ID (optional — used to catch duplicates across uploads), Stage (optional — defaults to Closed Won; rows marked "Payment Collected" count toward that month's Outstanding Collected instead of a new deal), Collected (optional). Outstanding is always calculated as Amount − Collected, never read from the file.</p>
     <div class="form-grid">
       <div>
         <label>Year</label>
@@ -1866,7 +1933,11 @@ function renderUpload() {
       <div>
         <label>Month</label>
         <select id="upload-month-select">
-          ${targetOptions.map(mk => `<option value="${mk}" ${mk === state.uploadMonth ? 'selected' : ''} ${bakedKeys.has(mk) ? 'disabled' : ''}>${titleCaseMonth(mk)}${bakedKeys.has(mk) ? ' (already in report)' : (live.uploads[mk] ? ' (uploaded — re-uploading replaces it)' : '')}</option>`).join('')}
+          ${targetOptions.map(mk => {
+            const already = live.uploads[mk];
+            const label = bakedKeys.has(mk) ? ' (already in report)' : (already ? ` (${(already.deals || []).length} deals so far — new ones merge in)` : '');
+            return `<option value="${mk}" ${mk === state.uploadMonth ? 'selected' : ''} ${bakedKeys.has(mk) ? 'disabled' : ''}>${titleCaseMonth(mk)}${label}</option>`;
+          }).join('')}
         </select>
       </div>
       <div>
@@ -1874,9 +1945,36 @@ function renderUpload() {
         <input type="file" id="upload-file-input" accept=".xlsx,.xls,.csv">
       </div>
     </div>
-    ${parsed ? `
-      <div class="footnote">Parsed ${num(parsed.deals.length)} rows from "${esc(parsed.fileName)}" — ${num(parsed.deals.filter(d => d.stage.indexOf('Closed Won') === 0).length)} closed-won, total ${money(parsed.deals.reduce((s, d) => s + (Number(d.amount) || 0), 0))}.
+    ${parsed ? (() => {
+      const existingForMonth = (live.uploads[state.uploadMonth] && live.uploads[state.uploadMonth].deals) || [];
+      const plan = planDealMerge(existingForMonth, parsed.deals.map(d => ({ ...d, month: state.uploadMonth })));
+      const decisions = state.uploadDupeDecisions || {};
+      return `
+      <div class="footnote">Parsed ${num(parsed.deals.length)} rows from "${esc(parsed.fileName)}" for ${esc(titleCaseMonth(state.uploadMonth))}.
       ${parsed.warnings.length ? `<br>${parsed.warnings.length} row(s) skipped: ${esc(parsed.warnings.slice(0, 5).join('; '))}${parsed.warnings.length > 5 ? '…' : ''}` : ''}</div>
+      <div class="footnote" style="margin-top:4px;">
+        <strong>${num(plan.toAdd.length)}</strong> new deal(s) will be added ·
+        <strong>${num(plan.exactDuplicates.length)}</strong> already in the report (skipped automatically)${
+          plan.possibleDuplicates.length ? ` · <strong>${num(plan.possibleDuplicates.length)}</strong> possible duplicate(s) — review below` : ''
+        }
+      </div>
+      ${plan.possibleDuplicates.length ? `
+      <div class="panel dupe-review-panel">
+        <h2>Review possible duplicates</h2>
+        <p class="panel-sub">Same name and amount as a deal already in this month, but a different date or Record ID — could be the same deal re-exported, or a real coincidence. Defaults to skipping it.</p>
+        ${plan.possibleDuplicates.map((pd, i) => `
+          <div class="dupe-review-row">
+            <div class="dupe-cols">
+              <div><span class="dupe-label">New row:</span> ${esc(pd.deal.name)} — ${dateStr(pd.deal.closeDate)} — ${money(pd.deal.amount, 2)}</div>
+              <div><span class="dupe-label">Already have:</span> ${pd.matches.map(m => `${esc(m.name)} — ${dateStr(m.closeDate)} — ${money(m.amount, 2)}`).join('; ')}</div>
+            </div>
+            <div class="dupe-actions">
+              <label><input type="radio" name="dupe-${i}" value="skip" data-dupe-index="${i}" ${(decisions[i] || 'skip') === 'skip' ? 'checked' : ''}> Skip (duplicate)</label>
+              <label><input type="radio" name="dupe-${i}" value="add" data-dupe-index="${i}" ${decisions[i] === 'add' ? 'checked' : ''}> Add as new</label>
+            </div>
+          </div>
+        `).join('')}
+      </div>` : ''}
       <div class="table-scroll upload-preview-table">
         <table class="report">
           <thead><tr><th>Deal Name</th><th>Close Date</th><th>Stage</th><th>Material</th><th style="text-align:right">Amount</th></tr></thead>
@@ -1888,7 +1986,8 @@ function renderUpload() {
         <button class="btn btn-primary" onclick="App.confirmUpload()">Save to Sales Report</button>
         <button class="btn btn-outline" onclick="App.cancelUpload()">Cancel</button>
       </div>
-    ` : ''}
+      `;
+    })() : ''}
     ${state.uploadMsg ? `<div class="footnote">${esc(state.uploadMsg)}</div>` : ''}
   </div>
 
@@ -1959,9 +2058,9 @@ function renderUpload() {
 
 function wireUploadControls() {
   const yearSel = document.getElementById('upload-year-select');
-  if (yearSel) yearSel.addEventListener('change', () => { state.uploadYear = yearSel.value; state.uploadMonth = null; state.uploadParsed = null; renderUploadOnly(); });
+  if (yearSel) yearSel.addEventListener('change', () => { state.uploadYear = yearSel.value; state.uploadMonth = null; state.uploadParsed = null; state.uploadDupeDecisions = {}; renderUploadOnly(); });
   const monthSel = document.getElementById('upload-month-select');
-  if (monthSel) monthSel.addEventListener('change', () => { state.uploadMonth = monthSel.value; state.uploadParsed = null; renderUploadOnly(); });
+  if (monthSel) monthSel.addEventListener('change', () => { state.uploadMonth = monthSel.value; state.uploadParsed = null; state.uploadDupeDecisions = {}; renderUploadOnly(); });
   const fileInput = document.getElementById('upload-file-input');
   if (fileInput) fileInput.addEventListener('change', () => { if (fileInput.files[0]) App.handleUploadFile(fileInput.files[0]); });
   const collMonthSel = document.getElementById('coll-month-select');
@@ -1970,6 +2069,9 @@ function wireUploadControls() {
   if (collAmount) collAmount.addEventListener('input', () => { state.collAmount = collAmount.value; });
   const collNote = document.getElementById('coll-note-input');
   if (collNote) collNote.addEventListener('input', () => { state.collNote = collNote.value; });
+  document.querySelectorAll('input[data-dupe-index]').forEach(inp => {
+    inp.addEventListener('change', () => App.setDupeDecision(inp.getAttribute('data-dupe-index'), inp.value));
+  });
 }
 
 function renderUploadOnly() {
@@ -2020,6 +2122,7 @@ const App = {
 
   async handleUploadFile(file) {
     state.uploadMsg = 'Parsing…';
+    state.uploadDupeDecisions = {};
     renderUploadOnly();
     try {
       const { deals, warnings } = await parseUploadFile(file);
@@ -2032,23 +2135,41 @@ const App = {
     renderUploadOnly();
   },
 
-  cancelUpload() { state.uploadParsed = null; state.uploadMsg = ''; renderUploadOnly(); },
+  cancelUpload() { state.uploadParsed = null; state.uploadDupeDecisions = {}; state.uploadMsg = ''; renderUploadOnly(); },
+
+  setDupeDecision(index, value) {
+    state.uploadDupeDecisions[index] = value;
+  },
 
   async confirmUpload() {
     if (!state.uploadParsed) return;
     const monthKey = state.uploadMonth;
-    const deals = state.uploadParsed.deals.map(d => ({ ...d, month: monthKey, year: parseInt(monthYearOf(monthKey), 10) }));
+    const existing = (live.uploads[monthKey] && live.uploads[monthKey].deals) || [];
+    const parsedDeals = state.uploadParsed.deals.map(d => ({ ...d, month: monthKey, year: parseInt(monthYearOf(monthKey), 10) }));
+    const plan = planDealMerge(existing, parsedDeals);
+    const decisions = state.uploadDupeDecisions || {};
+    const addedFromReview = plan.possibleDuplicates.filter((pd, i) => decisions[i] === 'add').map(pd => pd.deal);
+    const newDeals = plan.toAdd.concat(addedFromReview);
+    const skippedCount = plan.exactDuplicates.length + (plan.possibleDuplicates.length - addedFromReview.length);
+    // Merge onto whatever's already saved for this month — never replace it
+    // wholesale, since multiple CSVs get uploaded through the month as more
+    // deals close.
+    const deals = existing.concat(newDeals);
+    const fileName = state.uploadParsed.fileName;
+
     state.uploadMsg = 'Saving…';
     renderUploadOnly();
     if (live.mode === 'cloud' && window.__srSaveUpload) {
-      const res = await window.__srSaveUpload(monthKey, deals, state.uploadParsed.fileName);
+      const res = await window.__srSaveUpload(monthKey, deals, fileName);
       if (!res.ok) { state.uploadMsg = 'Save failed: ' + res.error; renderUploadOnly(); return; }
     } else {
-      live.uploads[monthKey] = { month: monthKey, deals, fileName: state.uploadParsed.fileName, uploadedAt: Date.now() };
+      live.uploads[monthKey] = { month: monthKey, deals, fileName, uploadedAt: Date.now() };
       saveLocalFallback();
     }
     state.uploadParsed = null;
-    state.uploadMsg = `Saved ${deals.length} deals for ${titleCaseMonth(monthKey)}.`;
+    state.uploadDupeDecisions = {};
+    state.uploadMsg = `Added ${newDeals.length} new deal(s) to ${titleCaseMonth(monthKey)}`
+      + (skippedCount ? ` — skipped ${skippedCount} already there.` : '.');
     render();
   },
 
