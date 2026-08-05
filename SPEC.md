@@ -321,14 +321,26 @@ live sheet cells won't confuse you:
 - **Activity Detail** (Pipeline tab) shows "n/a (cohort mismatch)" instead of a
   bare 0 for Pending # / Pending $ when the `MAX(0, …)` floor actually
   triggered (won + lost > created for that month).
-- **Not implemented** (flagged, not silently skipped):
-  - §2's transactional origin-record linkage (a Payment Collected event
-    retroactively reducing its origin deal's stored `outstanding`) — the
-    in-app "Log a Collection" feature is a lighter-weight aggregate ledger by
-    design, not a full per-deal payment ledger. Building that properly needs a
-    deal-picker UI to choose the origin record, which is a larger feature than
-    what's shipped.
-  - §6's material-type canonicalization (compound/non-material/near-duplicate
-    values folded into a clean enum) — this is a business taxonomy call, not a
-    pure logic fix, and hasn't been made unilaterally. Materials currently
-    render exactly as the source data spells them.
+- **§2's transactional origin-record linkage is now implemented** via a
+  per-deal "Collect" action (Deals tab, shown whenever a deal's effective
+  Outstanding > 0): entering an amount there does both things §2 calls for —
+  (1) increases that deal's own effective Collected (stored as an absolute
+  override keyed the same way as its Freight/Tax, so no new Firestore
+  collection), which mechanically reduces its Outstanding and therefore
+  increases Revenue for the deal's **origin** month; and (2) logs a
+  collection-log entry dated to whichever month the cash actually arrived,
+  adding to **that** month's Outstanding Collected. A month with no deals of
+  its own yet (cash arrives before any closed-deal data exists for it) still
+  gets its own column, synthesized purely from its collection-log entries.
+  Net effect: the same cash event legitimately appears twice — once as
+  newly-recognized Revenue in the origin month, once as Outstanding Collected
+  in the month it landed — which is intentional, not double-counting; each
+  month's Total Collected answers a different question ("what we booked
+  in month X is now realized as revenue" vs. "cash that hit the bank in
+  month X"). Revenue and Outstanding are recomputed together (`revenue =
+  dealAmount - outstanding`) so that invariant never drifts out of sync.
+- **Not implemented**: §6's material-type canonicalization (compound/
+  non-material/near-duplicate values folded into a clean enum) — this is a
+  business taxonomy call, not a pure logic fix, and hasn't been made
+  unilaterally. Materials currently render exactly as the source data spells
+  them.
