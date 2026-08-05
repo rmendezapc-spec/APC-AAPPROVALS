@@ -420,6 +420,24 @@
   </div>
 </div>
 
+<div id="mark-collected-overlay" class="modal-overlay" onclick="if (event.target === this) App.closeMarkCollected();">
+  <div class="modal-card">
+    <h3>Mark Collected</h3>
+    <p class="panel-sub">Record cash collected against <strong id="mark-collected-deal-name"></strong>. This reduces its Outstanding (updating its own month's totals) and adds to the Outstanding Collected for whichever month the cash actually came in.</p>
+    <div class="form-grid">
+      <div><label>Amount Collected Now</label><input type="text" id="mark-collected-amount" placeholder="0.00"></div>
+      <div><label>Month Collected</label><select id="mark-collected-month"></select></div>
+    </div>
+    <div class="modal-actions">
+      <span class="footnote" id="mark-collected-msg"></span>
+      <div>
+        <button class="btn btn-outline btn-small" onclick="App.closeMarkCollected()">Cancel</button>
+        <button class="btn btn-primary" onclick="App.submitMarkCollected()">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.17.0/firebase-app.js";
   import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/12.17.0/firebase-firestore.js";
@@ -579,6 +597,7 @@ const state = {
   collMonth: null,
   collAmount: '',
   collNote: '',
+  markCollectedKey: null,
 };
 if (!state.tabs.some(t => t.id === state.tab && !t.hidden)) {
   const firstVisible = state.tabs.find(t => !t.hidden);
@@ -635,7 +654,8 @@ function parseMoneyCell(v) {
 }
 
 // ---------------------------------------------------------------------------
-// CSV export
+// CSV + Word export — both formats share the same [header, ...rows] data per
+// tab; only the file-writing step differs.
 // ---------------------------------------------------------------------------
 function csvCell(v) {
   const s = String(v == null ? '' : v);
@@ -651,7 +671,35 @@ function downloadCSV(filename, rows) {
   URL.revokeObjectURL(url);
 }
 
-function exportOverviewCSV() {
+// A .doc file that's actually Word-flavored HTML — Word, LibreOffice, and
+// Google Docs all open this correctly. Building a true .docx (a zip of XML
+// parts) needs a library; this needs none and every viewer that matters
+// already handles it.
+function downloadWordDoc(filename, title, rows) {
+  let html = '<table><thead><tr>' + rows[0].map(c => `<th>${esc(c)}</th>`).join('') + '</tr></thead><tbody>';
+  for (let i = 1; i < rows.length; i++) {
+    html += '<tr>' + rows[i].map(c => `<td>${esc(c)}</td>`).join('') + '</tr>';
+  }
+  html += '</tbody></table>';
+  const doc = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+<head><meta charset="utf-8"><title>${esc(title)}</title>
+<style>
+  body { font-family: Calibri, Arial, sans-serif; font-size: 11pt; }
+  h1 { font-size: 16pt; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border: 1px solid #999; padding: 4px 8px; font-size: 9.5pt; text-align: left; }
+  th { background: #1F3864; color: #fff; }
+</style></head>
+<body><h1>${esc(title)}</h1>${html}</body></html>`;
+  const blob = new Blob(['﻿', doc], { type: 'application/msword' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function overviewExportRows() {
   const yd = effectiveYearData(state.year);
   const months = yd.monthly, t = yd.totals;
   const header = ['Metric', ...months.map(m => titleCaseMonth(m.month)), 'YTD Total'];
@@ -667,27 +715,35 @@ function exportOverviewCSV() {
     ['Largest Deal', ...months.map(m => m.largestDeal), t.largestDeal],
     ['Smallest Deal', ...months.map(m => m.smallestDeal), t.smallestDeal],
   ];
-  downloadCSV(`sales-report-overview-${state.year}.csv`, [header, ...rows]);
+  return [header, ...rows];
 }
+function exportOverviewCSV() { downloadCSV(`sales-report-overview-${state.year}.csv`, overviewExportRows()); }
+function exportOverviewWord() { downloadWordDoc(`sales-report-overview-${state.year}.doc`, `Sales Report — Overview (${state.year})`, overviewExportRows()); }
 
-function exportMaterialsCSV() {
+function materialsExportRows() {
   const yd = effectiveYearData(state.year);
   const rows = yd.materials.slice().sort((a, b) => (b.amount || 0) - (a.amount || 0));
   const header = ['Material', 'Deals', 'Amount', '% of Sales'];
-  downloadCSV(`sales-report-materials-${state.year}.csv`, [header, ...rows.map(r => [r.material, r.deals, r.amount, (r.pct * 100).toFixed(2) + '%'])]);
+  return [header, ...rows.map(r => [r.material, r.deals, r.amount, (r.pct * 100).toFixed(2) + '%'])];
 }
+function exportMaterialsCSV() { downloadCSV(`sales-report-materials-${state.year}.csv`, materialsExportRows()); }
+function exportMaterialsWord() { downloadWordDoc(`sales-report-materials-${state.year}.doc`, `Sales Report — Materials (${state.year})`, materialsExportRows()); }
 
-function exportDealsCSV() {
+function dealsExportRows() {
   const { rows } = getFilteredSortedDeals();
-  const header = ['Deal Name', 'Close Date', 'Stage', 'Material', 'Owner', 'Amount', 'Collected', 'Freight', 'Tax'];
+  const header = ['Deal Name', 'Close Date', 'Stage', 'Material', 'Owner', 'Amount', 'Collected', 'Outstanding', 'Freight', 'Tax'];
   const body = rows.map(d => {
     const extra = live.overrides[dealKey(d)] || {};
-    return [d.name, d.closeDate || '', d.stage || '', d.material || '', d.owner || '', d.amount != null ? d.amount : '', d.collected != null ? d.collected : '', extra.freight != null ? extra.freight : '', extra.tax != null ? extra.tax : ''];
+    const collected = effectiveDealCollected(d);
+    const outstanding = effectiveDealOutstanding(d);
+    return [d.name, d.closeDate || '', d.stage || '', d.material || '', d.owner || '', d.amount != null ? d.amount : '', collected, outstanding, extra.freight != null ? extra.freight : '', extra.tax != null ? extra.tax : ''];
   });
-  downloadCSV(`sales-report-deals-${state.year}.csv`, [header, ...body]);
+  return [header, ...body];
 }
+function exportDealsCSV() { downloadCSV(`sales-report-deals-${state.year}.csv`, dealsExportRows()); }
+function exportDealsWord() { downloadWordDoc(`sales-report-deals-${state.year}.doc`, `Sales Report — Deals (${state.year})`, dealsExportRows()); }
 
-function exportPipelineCSV() {
+function pipelineExportRows() {
   const p = SALES_DATA.pipeline;
   const header = ['Month', 'Created', 'Won #', 'Lost #', 'Pending #', 'Win Rate', 'Pipeline $', 'Won $', 'Lost $', 'Pending $'];
   const rows = p.activityByMonth.map(a => [a.month, a.dealsCreated, a.won, a.lost, a.pending, (a.winRate * 100).toFixed(1) + '%', a.pipelineAmount, a.wonAmount, a.lostAmount, a.pendingAmount]);
@@ -695,8 +751,10 @@ function exportPipelineCSV() {
     const t = p.activityTotal;
     rows.push(['Total', t.dealsCreated, t.won, t.lost, t.pending, (t.winRate * 100).toFixed(1) + '%', t.pipelineAmount, t.wonAmount, t.lostAmount, t.pendingAmount]);
   }
-  downloadCSV('sales-report-pipeline-activity.csv', [header, ...rows]);
+  return [header, ...rows];
 }
+function exportPipelineCSV() { downloadCSV('sales-report-pipeline-activity.csv', pipelineExportRows()); }
+function exportPipelineWord() { downloadWordDoc('sales-report-pipeline-activity.doc', 'Sales Report — Pipeline Activity', pipelineExportRows()); }
 
 // ---------------------------------------------------------------------------
 // Month-key helpers — a month key is always "<MONTHNAME> <YEAR>", e.g.
@@ -995,13 +1053,20 @@ function effectiveMonthly(year) {
     const monthKey = monthKeyOf(mn, year);
     const baked = base.monthly[i];
     const ov = live.overrides[monthKey] || {};
-    const outstanding = ov.outstanding != null ? ov.outstanding : baked.outstanding;
+    // A "Collect" action recorded against one of this month's own deals
+    // (paying down its Outstanding, possibly from a much later month) shows
+    // up here as a reduction in Outstanding / increase in Revenue for the
+    // deal's origin month — see SPEC.md §2 and §9.
+    const monthDeals = base.deals.filter(d => d.month === monthKey);
+    const adj = dealCollectionAdjustment(monthDeals);
+    const outstanding = ov.outstanding != null ? ov.outstanding : (baked.outstanding - adj);
+    const revenue = baked.dealAmount - outstanding;
     const outstandingCollected = baked.outstandingCollected + collectionsSumFor(monthKey);
-    const totalCollected = baked.revenue + outstandingCollected;
+    const totalCollected = revenue + outstandingCollected;
     const commission = ov.commission != null ? ov.commission : commissionFor(totalCollected);
     months.push({
       month: monthKey, monthLabel: mn, isUploaded: false,
-      dealAmount: baked.dealAmount, revenue: baked.revenue,
+      dealAmount: baked.dealAmount, revenue,
       deals: baked.deals, avgDealSize: baked.avgDealSize,
       largestDeal: baked.largestDeal, smallestDeal: baked.smallestDeal,
       commission, outstanding, outstandingCollected, totalCollected,
@@ -1010,21 +1075,46 @@ function effectiveMonthly(year) {
 
   uploadedKeys.forEach(monthKey => {
     const upload = live.uploads[monthKey];
-    const metrics = computeMonthMetrics(upload.deals || []);
+    const uploadDeals = upload.deals || [];
+    const metrics = computeMonthMetrics(uploadDeals);
     const ov = live.overrides[monthKey] || {};
-    const outstanding = ov.outstanding != null ? ov.outstanding : metrics.outstanding;
+    const adj = dealCollectionAdjustment(uploadDeals);
+    const outstanding = ov.outstanding != null ? ov.outstanding : (metrics.outstanding - adj);
+    const revenue = metrics.dealAmount - outstanding;
     const outstandingCollected = metrics.outstandingCollectedFromRows + collectionsSumFor(monthKey);
-    const totalCollected = metrics.revenue + outstandingCollected;
+    const totalCollected = revenue + outstandingCollected;
     const commission = ov.commission != null ? ov.commission : commissionFor(totalCollected);
     months.push({
       month: monthKey, monthLabel: monthNameOf(monthKey), isUploaded: true,
-      dealAmount: metrics.dealAmount, revenue: metrics.revenue,
+      dealAmount: metrics.dealAmount, revenue,
       deals: metrics.deals, avgDealSize: metrics.avgDealSize,
       largestDeal: metrics.largestDeal, smallestDeal: metrics.smallestDeal,
       commission, outstanding, outstandingCollected, totalCollected,
     });
   });
 
+  // A "Collect" or manual collection can be logged against a month that has
+  // no deals of its own at all yet (e.g. cash arrives before that month's
+  // closed-deal export exists) — without this, that cash has nowhere to
+  // show up on the grid even though it's a real Outstanding Collected
+  // contribution for that month.
+  const coveredKeys = new Set(months.map(m => m.month));
+  const collectionOnlyKeys = Array.from(new Set(live.collections.map(c => c.month)))
+    .filter(mk => monthYearOf(mk) === String(year) && !coveredKeys.has(mk));
+  collectionOnlyKeys.forEach(monthKey => {
+    const ov = live.overrides[monthKey] || {};
+    const outstandingCollected = collectionsSumFor(monthKey);
+    const totalCollected = outstandingCollected;
+    const commission = ov.commission != null ? ov.commission : commissionFor(totalCollected);
+    months.push({
+      month: monthKey, monthLabel: monthNameOf(monthKey), isUploaded: true,
+      dealAmount: 0, revenue: 0, deals: 0, avgDealSize: 0, largestDeal: 0, smallestDeal: 0,
+      commission, outstanding: ov.outstanding != null ? ov.outstanding : 0,
+      outstandingCollected, totalCollected,
+    });
+  });
+
+  months.sort((a, b) => monthSortValue(a.month) - monthSortValue(b.month));
   return months;
 }
 
@@ -1159,7 +1249,8 @@ function renderExportToolbar() {
   if (state.tab === 'upload') return '';
   return `<div class="field-row no-print" style="justify-content:flex-end;">
     <button class="btn btn-outline btn-small" onclick="window.print()">🖨️ Print</button>
-    <button class="btn btn-outline btn-small" onclick="App.downloadCurrentTab()">⬇️ Download CSV</button>
+    <button class="btn btn-outline btn-small" onclick="App.downloadCurrentTab('csv')">⬇️ CSV</button>
+    <button class="btn btn-outline btn-small" onclick="App.downloadCurrentTab('word')">📄 Word</button>
   </div>`;
 }
 
@@ -1343,6 +1434,35 @@ function dealKey(d) {
   return `deal:${d.month}|${d.name}|${d.closeDate || ''}|${d.amount}`;
 }
 
+// A "Collect" action can push more cash onto a deal than its original row
+// recorded — stored as an absolute override (the new total Collected),
+// same override doc as Freight/Tax, keyed off the same dealKey. Falls back
+// to the deal's own value, defaulting a blank Collected to the full Amount
+// (see the blank-Collected note in computeMonthMetrics/SPEC.md §9).
+function effectiveDealCollected(d) {
+  const ov = live.overrides[dealKey(d)];
+  if (ov && ov.collected != null) return Number(ov.collected);
+  return d.collected != null ? Number(d.collected) : (Number(d.amount) || 0);
+}
+function effectiveDealOutstanding(d) {
+  return (Number(d.amount) || 0) - effectiveDealCollected(d);
+}
+
+// How much MORE has now been collected on these deals than their base data
+// assumed — this shifts from Outstanding to Revenue for the deals' own
+// (origin) month once a "Collect" action records a payment on them.
+function dealCollectionAdjustment(deals) {
+  let adj = 0;
+  deals.forEach(d => {
+    const ov = live.overrides[dealKey(d)];
+    if (!ov || ov.collected == null) return;
+    const amt = Number(d.amount) || 0;
+    const baseCollected = d.collected != null ? Number(d.collected) : amt;
+    adj += Number(ov.collected) - baseCollected;
+  });
+  return adj;
+}
+
 function getFilteredSortedDeals() {
   const yd = effectiveYearData(state.year);
   let rows = yd.deals.filter(d => {
@@ -1426,6 +1546,7 @@ function renderDeals() {
           ${col('owner', 'Owner')}
           ${col('amount', 'Amount')}
           ${col('collected', 'Collected')}
+          <th>Outstanding</th>
           <th>Freight</th>
           <th>Tax</th>
         </tr></thead>
@@ -1444,17 +1565,24 @@ function dealGroupRows(group, yd) {
   const monthRow = yd.monthly.find(m => m.month === group.month);
   const wonRows = group.rows.filter(d => d.stage && d.stage.indexOf('Closed Won') === 0);
   const wonAmount = wonRows.reduce((s, d) => s + (Number(d.amount) || 0), 0);
-  let freightTotal = 0, taxTotal = 0;
+  let freightTotal = 0, taxTotal = 0, outstandingTotal = 0;
   const gap = monthRow && wonRows.length !== monthRow.deals;
   const gapFlag = gap
     ? ` <span class="gap-flag" title="This month's KPI total says ${monthRow.deals} deals, but only ${wonRows.length} are listed here.">⚠ ${num(wonRows.length)} of ${num(monthRow.deals)} deals listed</span>`
     : '';
-  let out = `<tr class="month-group-header"><td colspan="9">📅 ${esc(titleCaseMonth(group.month))}${gapFlag}</td></tr>`;
+  let out = `<tr class="month-group-header"><td colspan="10">📅 ${esc(titleCaseMonth(group.month))}${gapFlag}</td></tr>`;
   out += group.rows.map(d => {
     const k = dealKey(d);
     const extra = live.overrides[k] || {};
     freightTotal += Number(extra.freight) || 0;
     taxTotal += Number(extra.tax) || 0;
+    const collected = effectiveDealCollected(d);
+    const outstanding = effectiveDealOutstanding(d);
+    const isWon = d.stage && d.stage.indexOf('Closed Won') === 0;
+    if (isWon) outstandingTotal += outstanding;
+    const collectBtn = (isWon && outstanding > 0.004)
+      ? ` <button class="btn btn-outline btn-small collect-btn no-print" data-deal-key="${esc(k)}" data-deal-name="${esc(d.name)}" data-outstanding="${outstanding.toFixed(2)}">Collect</button>`
+      : '';
     return `<tr>
     <td>${esc(d.name)}</td>
     <td>${dateStr(d.closeDate)}</td>
@@ -1462,12 +1590,13 @@ function dealGroupRows(group, yd) {
     <td>${esc(d.material || '—')}</td>
     <td>${esc(d.owner || '—')}</td>
     <td class="num">${d.amount != null ? money(d.amount, 2) : '—'}</td>
-    <td class="num">${d.collected != null ? money(d.collected, 2) : '—'}</td>
+    <td class="num">${money(collected, 2)}</td>
+    <td class="num">${outstanding > 0.004 ? money(outstanding, 2) : '—'}${collectBtn}</td>
     <td class="num"><input class="cell-edit no-print-input" type="text" data-deal-key="${esc(k)}" data-field="freight" value="${extra.freight != null ? Number(extra.freight).toFixed(2) : ''}" placeholder="—"></td>
     <td class="num"><input class="cell-edit no-print-input" type="text" data-deal-key="${esc(k)}" data-field="tax" value="${extra.tax != null ? Number(extra.tax).toFixed(2) : ''}" placeholder="—"></td>
   </tr>`;
   }).join('');
-  out += `<tr class="month-group-total"><td colspan="5">MONTHLY TOTAL (${num(wonRows.length)} deals)</td><td class="num">${money(wonAmount, 2)}</td><td></td><td class="num">${freightTotal ? money(freightTotal, 2) : ''}</td><td class="num">${taxTotal ? money(taxTotal, 2) : ''}</td></tr>`;
+  out += `<tr class="month-group-total"><td colspan="5">MONTHLY TOTAL (${num(wonRows.length)} deals)</td><td class="num">${money(wonAmount, 2)}</td><td class="num">${money(wonAmount - outstandingTotal, 2)}</td><td class="num">${outstandingTotal ? money(outstandingTotal, 2) : ''}</td><td class="num">${freightTotal ? money(freightTotal, 2) : ''}</td><td class="num">${taxTotal ? money(taxTotal, 2) : ''}</td></tr>`;
   return out;
 }
 
@@ -1501,6 +1630,11 @@ function wireDealControls() {
       // the key just happens to be a deal composite instead of a month, so
       // no new Firestore collection (and no new Rules entry) is needed.
       App.saveOverride(inp.getAttribute('data-deal-key'), inp.getAttribute('data-field'), inp.value);
+    });
+  });
+  document.querySelectorAll('.collect-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      App.openMarkCollected(btn.getAttribute('data-deal-key'), btn.getAttribute('data-deal-name'), btn.getAttribute('data-outstanding'));
     });
   });
 }
@@ -2014,11 +2148,15 @@ const App = {
     render();
   },
 
-  downloadCurrentTab() {
-    if (state.tab === 'overview') exportOverviewCSV();
-    else if (state.tab === 'materials') exportMaterialsCSV();
-    else if (state.tab === 'deals') exportDealsCSV();
-    else if (state.tab === 'pipeline') exportPipelineCSV();
+  downloadCurrentTab(format) {
+    const fns = {
+      overview: format === 'word' ? exportOverviewWord : exportOverviewCSV,
+      materials: format === 'word' ? exportMaterialsWord : exportMaterialsCSV,
+      deals: format === 'word' ? exportDealsWord : exportDealsCSV,
+      pipeline: format === 'word' ? exportPipelineWord : exportPipelineCSV,
+    };
+    const fn = fns[state.tab];
+    if (fn) fn();
   },
 
   openAddDeal() {
@@ -2069,6 +2207,60 @@ const App = {
       saveLocalFallback();
     }
     App.closeAddDeal();
+    render();
+  },
+
+  openMarkCollected(dealKeyValue, dealName, outstandingStr) {
+    state.markCollectedKey = dealKeyValue;
+    document.getElementById('mark-collected-deal-name').textContent = dealName;
+    document.getElementById('mark-collected-amount').value = outstandingStr;
+    const monthSel = document.getElementById('mark-collected-month');
+    const cur = currentMonthKey();
+    const months = knownMonthKeys();
+    monthSel.innerHTML = months.map(mk => `<option value="${mk}" ${mk === cur ? 'selected' : ''}>${titleCaseMonth(mk)}</option>`).join('');
+    document.getElementById('mark-collected-msg').textContent = '';
+    document.getElementById('mark-collected-overlay').classList.add('open');
+  },
+  closeMarkCollected() {
+    document.getElementById('mark-collected-overlay').classList.remove('open');
+    state.markCollectedKey = null;
+  },
+  async submitMarkCollected() {
+    const key = state.markCollectedKey;
+    const msg = document.getElementById('mark-collected-msg');
+    const yd = effectiveYearData(state.year);
+    const deal = yd.deals.find(d => dealKey(d) === key);
+    if (!deal) { msg.textContent = 'Could not find that deal — try reopening it from the table.'; return; }
+
+    const amountNow = parseMoneyCell(document.getElementById('mark-collected-amount').value);
+    const monthCollected = document.getElementById('mark-collected-month').value;
+    if (!amountNow || amountNow <= 0) { msg.textContent = 'Enter an amount greater than 0.'; return; }
+
+    const amt = Number(deal.amount) || 0;
+    const currentCollected = effectiveDealCollected(deal);
+    const remaining = amt - currentCollected;
+    const applied = Math.min(amountNow, remaining);
+    const newCollected = currentCollected + applied;
+    const capped = amountNow > remaining;
+
+    msg.textContent = 'Saving…';
+    await App.saveOverride(key, 'collected', newCollected);
+
+    const entry = {
+      id: 'col_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+      month: monthCollected, amount: applied,
+      note: `Collected on: ${deal.name} (${titleCaseMonth(deal.month)} deal)`,
+      enteredAt: Date.now(),
+    };
+    if (live.mode === 'cloud' && window.__srSaveCollection) {
+      const res = await window.__srSaveCollection(entry);
+      if (!res.ok) { msg.textContent = 'Save failed: ' + res.error; return; }
+    } else {
+      live.collections.push(entry);
+      saveLocalFallback();
+    }
+    App.closeMarkCollected();
+    if (capped) state.uploadMsg = `Capped to the remaining balance of ${money(remaining, 2)} on "${deal.name}".`;
     render();
   },
 };
