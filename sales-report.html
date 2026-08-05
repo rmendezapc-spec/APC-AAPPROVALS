@@ -316,6 +316,13 @@
   table.grid-table input.grid-edit:hover { border-color: var(--line); }
   table.grid-table input.grid-edit:focus { outline: none; border-color: var(--amber); background: var(--paper); }
 
+  input.cell-edit {
+    width: 100%; min-width: 76px; text-align: right; border: 1px solid transparent; background: transparent;
+    color: var(--ink); font-family: var(--mono); font-size: 13px; padding: 3px 4px; border-radius: 3px; box-shadow: none;
+  }
+  input.cell-edit:hover { border-color: var(--line); }
+  input.cell-edit:focus { outline: none; border-color: var(--amber); background: var(--paper); }
+
   .storage-banner { padding: 10px 16px; border-radius: var(--radius); margin-bottom: 16px; font-size: 13px; font-weight: 600; }
   .storage-banner.error { background: var(--red-soft); color: var(--red); }
   .storage-banner.info { background: var(--amber-soft); color: var(--amber); }
@@ -329,6 +336,17 @@
     .panel { padding: 16px 16px; }
     header.topbar { padding: 14px 16px; }
     .mat-bar-row { grid-template-columns: 90px 1fr 70px; font-size: 11.5px; }
+  }
+
+  @media print {
+    .no-print, header.topbar, .tabs, .brand-strip, #chart-tip, .modal-overlay, .settings-menu { display: none !important; }
+    body { background: #fff !important; color: #000 !important; }
+    main { padding: 0; max-width: 100%; }
+    .panel { box-shadow: none; border: 1px solid #ccc; break-inside: avoid; margin-bottom: 12px; }
+    table.report, table.grid-table { font-size: 10.5px; }
+    .table-scroll { overflow: visible; }
+    input.cell-edit, table.grid-table input.grid-edit { border: none; background: transparent; color: #000; }
+    svg.chart-svg { max-width: 100%; }
   }
 </style>
 </head>
@@ -522,6 +540,7 @@ const state = {
   dealMonth: 'all',
   dealStage: 'all',
   dealSort: { key: 'closeDate', dir: 'desc' },
+  dealMonthOrder: (() => { try { return localStorage.getItem('sr_deal_month_order') || 'desc'; } catch (e) { return 'desc'; } })(),
   uploadYear: null,
   uploadMonth: null,
   uploadParsed: null,
@@ -582,6 +601,70 @@ function parseMoneyCell(v) {
   if (typeof v === 'number') return v;
   const n = parseFloat(String(v).replace(/[$,]/g, ''));
   return isNaN(n) ? 0 : n;
+}
+
+// ---------------------------------------------------------------------------
+// CSV export
+// ---------------------------------------------------------------------------
+function csvCell(v) {
+  const s = String(v == null ? '' : v);
+  return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+function downloadCSV(filename, rows) {
+  const csv = rows.map(r => r.map(csvCell).join(',')).join('\r\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function exportOverviewCSV() {
+  const yd = effectiveYearData(state.year);
+  const months = yd.monthly, t = yd.totals;
+  const header = ['Metric', ...months.map(m => titleCaseMonth(m.month)), 'YTD Total'];
+  const rows = [
+    ['Deal Amount', ...months.map(m => m.dealAmount), t.dealAmount],
+    ['Revenue', ...months.map(m => m.revenue), t.revenue],
+    ['Outstanding Collected', ...months.map(m => m.outstandingCollected), t.outstandingCollected],
+    ['Total Collected', ...months.map(m => m.totalCollected), t.totalCollected],
+    ['Deals', ...months.map(m => m.deals), t.deals],
+    ['Avg Deal Size', ...months.map(m => m.avgDealSize.toFixed(2)), t.avgDealSize.toFixed(2)],
+    ['Commission (0.5%)', ...months.map(m => m.commission.toFixed(4)), t.commission.toFixed(4)],
+    ['Outstanding', ...months.map(m => m.outstanding), t.outstanding],
+    ['Largest Deal', ...months.map(m => m.largestDeal), t.largestDeal],
+    ['Smallest Deal', ...months.map(m => m.smallestDeal), t.smallestDeal],
+  ];
+  downloadCSV(`sales-report-overview-${state.year}.csv`, [header, ...rows]);
+}
+
+function exportMaterialsCSV() {
+  const yd = effectiveYearData(state.year);
+  const rows = yd.materials.slice().sort((a, b) => (b.amount || 0) - (a.amount || 0));
+  const header = ['Material', 'Deals', 'Amount', '% of Sales'];
+  downloadCSV(`sales-report-materials-${state.year}.csv`, [header, ...rows.map(r => [r.material, r.deals, r.amount, (r.pct * 100).toFixed(2) + '%'])]);
+}
+
+function exportDealsCSV() {
+  const { rows } = getFilteredSortedDeals();
+  const header = ['Deal Name', 'Close Date', 'Stage', 'Material', 'Owner', 'Amount', 'Collected', 'Freight', 'Tax'];
+  const body = rows.map(d => {
+    const extra = live.overrides[dealKey(d)] || {};
+    return [d.name, d.closeDate || '', d.stage || '', d.material || '', d.owner || '', d.amount != null ? d.amount : '', d.collected != null ? d.collected : '', extra.freight != null ? extra.freight : '', extra.tax != null ? extra.tax : ''];
+  });
+  downloadCSV(`sales-report-deals-${state.year}.csv`, [header, ...body]);
+}
+
+function exportPipelineCSV() {
+  const p = SALES_DATA.pipeline;
+  const header = ['Month', 'Created', 'Won #', 'Lost #', 'Pending #', 'Win Rate', 'Pipeline $', 'Won $', 'Lost $', 'Pending $'];
+  const rows = p.activityByMonth.map(a => [a.month, a.dealsCreated, a.won, a.lost, a.pending, (a.winRate * 100).toFixed(1) + '%', a.pipelineAmount, a.wonAmount, a.lostAmount, a.pendingAmount]);
+  if (p.activityTotal) {
+    const t = p.activityTotal;
+    rows.push(['Total', t.dealsCreated, t.won, t.lost, t.pending, (t.winRate * 100).toFixed(1) + '%', t.pipelineAmount, t.wonAmount, t.lostAmount, t.pendingAmount]);
+  }
+  downloadCSV('sales-report-pipeline-activity.csv', [header, ...rows]);
 }
 
 // ---------------------------------------------------------------------------
@@ -1023,6 +1106,14 @@ function renderTabs() {
   ).join('')}</div>`;
 }
 
+function renderExportToolbar() {
+  if (state.tab === 'upload') return '';
+  return `<div class="field-row no-print" style="justify-content:flex-end;">
+    <button class="btn btn-outline btn-small" onclick="window.print()">🖨️ Print</button>
+    <button class="btn btn-outline btn-small" onclick="App.downloadCurrentTab()">⬇️ Download CSV</button>
+  </div>`;
+}
+
 function render() {
   renderYearToggle();
   const main = document.getElementById('main');
@@ -1032,7 +1123,7 @@ function render() {
   else if (state.tab === 'deals') body = renderDeals();
   else if (state.tab === 'pipeline') body = renderPipeline();
   else if (state.tab === 'upload') body = renderUpload();
-  main.innerHTML = renderTabs() + body;
+  main.innerHTML = renderTabs() + renderExportToolbar() + body;
   wireDealControls();
   wireUploadControls();
   wireOverviewControls();
@@ -1060,7 +1151,7 @@ function renderOverview() {
 
   return `
   ${renderStorageBanner()}
-  <div class="month-select-row">
+  <div class="month-select-row no-print">
     <label style="font-size:12px;color:var(--muted);text-transform:uppercase;">Viewing</label>
     <select id="month-view-select">
       <option value="all" ${state.monthView === 'all' ? 'selected' : ''}>Full Year (${state.year})</option>
@@ -1195,10 +1286,16 @@ function stagePill(stage) {
   return `<span class="stage-pill stage-other">${esc(stage)}</span>`;
 }
 
-function renderDeals() {
-  const yd = effectiveYearData(state.year);
-  const monthKeys = Array.from(new Set(yd.deals.map(d => d.month))).sort((a, b) => monthSortValue(a) - monthSortValue(b));
+// A stable-ish identity for a deal row so per-row Freight/Tax entries
+// survive re-renders and reloads. recordId alone isn't reliable (Payment
+// Collected rows reuse their origin deal's recordId, and some rows have
+// none at all) — this composite is unique enough in practice.
+function dealKey(d) {
+  return `deal:${d.month}|${d.name}|${d.closeDate || ''}|${d.amount}`;
+}
 
+function getFilteredSortedDeals() {
+  const yd = effectiveYearData(state.year);
   let rows = yd.deals.filter(d => {
     if (state.dealMonth !== 'all' && d.month !== state.dealMonth) return false;
     if (state.dealStage !== 'all' && d.stage !== state.dealStage) return false;
@@ -1222,7 +1319,12 @@ function renderDeals() {
     if (av > bv) return dir === 'asc' ? 1 : -1;
     return 0;
   });
+  return { yd, rows };
+}
 
+function renderDeals() {
+  const { yd, rows } = getFilteredSortedDeals();
+  const monthKeys = Array.from(new Set(yd.deals.map(d => d.month))).sort((a, b) => monthSortValue(a) - monthSortValue(b));
   const stages = Array.from(new Set(yd.deals.map(d => d.stage))).filter(Boolean);
 
   const col = (key2, label) => {
@@ -1232,20 +1334,22 @@ function renderDeals() {
   };
 
   // Group by month, like the source spreadsheet's per-month blocks —
-  // preserving each month's internal ordering from the sort/filter above,
-  // and the months themselves in chronological order.
+  // preserving each month's internal ordering from the sort/filter above.
+  // The months themselves order by state.dealMonthOrder (newest or oldest
+  // first — "pull the most current month to the top").
   const groupIndex = new Map();
   rows.forEach(d => {
     if (!groupIndex.has(d.month)) groupIndex.set(d.month, []);
     groupIndex.get(d.month).push(d);
   });
+  const orderMult = state.dealMonthOrder === 'asc' ? 1 : -1;
   const groups = Array.from(groupIndex.keys())
-    .sort((a, b) => monthSortValue(a) - monthSortValue(b))
+    .sort((a, b) => orderMult * (monthSortValue(a) - monthSortValue(b)))
     .map(mk => ({ month: mk, rows: groupIndex.get(mk) }));
 
   return `
   <div class="panel">
-    <div class="field-row">
+    <div class="field-row no-print">
       <input type="text" id="deal-search" placeholder="Search name, material, owner…" value="${esc(state.dealSearch)}">
       <select id="deal-month-filter">
         <option value="all">All months</option>
@@ -1254,6 +1358,10 @@ function renderDeals() {
       <select id="deal-stage-filter">
         <option value="all">All stages</option>
         ${stages.map(s => `<option value="${esc(s)}" ${state.dealStage === s ? 'selected' : ''}>${esc(s)}</option>`).join('')}
+      </select>
+      <select id="deal-month-order-select">
+        <option value="desc" ${state.dealMonthOrder === 'desc' ? 'selected' : ''}>Newest month first</option>
+        <option value="asc" ${state.dealMonthOrder === 'asc' ? 'selected' : ''}>Oldest month first</option>
       </select>
       <span class="footnote">${rows.length} of ${yd.deals.length} rows</span>
     </div>
@@ -1268,6 +1376,8 @@ function renderDeals() {
           ${col('owner', 'Owner')}
           ${col('amount', 'Amount')}
           ${col('collected', 'Collected')}
+          <th>Freight</th>
+          <th>Tax</th>
         </tr></thead>
         <tbody>
           ${groups.map(g => dealGroupRows(g, yd)).join('')}
@@ -1277,20 +1387,25 @@ function renderDeals() {
   </div>`;
 }
 
-// One month's section: a banner row (flagging a KPI/ledger mismatch inline,
-// same check as before but visible per-group instead of only when filtered
-// to that single month), its deal rows, then a "MONTHLY TOTAL" row — mirrors
-// the source workbook's own per-month block layout.
+// One month's section: a banner row (flagging a KPI/ledger mismatch inline),
+// its deal rows (with editable Freight/Tax cells), then a "MONTHLY TOTAL"
+// row — mirrors the source workbook's own per-month block layout.
 function dealGroupRows(group, yd) {
   const monthRow = yd.monthly.find(m => m.month === group.month);
   const wonRows = group.rows.filter(d => d.stage && d.stage.indexOf('Closed Won') === 0);
   const wonAmount = wonRows.reduce((s, d) => s + (Number(d.amount) || 0), 0);
+  let freightTotal = 0, taxTotal = 0;
   const gap = monthRow && wonRows.length !== monthRow.deals;
   const gapFlag = gap
     ? ` <span class="gap-flag" title="This month's KPI total says ${monthRow.deals} deals, but only ${wonRows.length} are listed here.">⚠ ${num(wonRows.length)} of ${num(monthRow.deals)} deals listed</span>`
     : '';
-  let out = `<tr class="month-group-header"><td colspan="7">📅 ${esc(titleCaseMonth(group.month))}${gapFlag}</td></tr>`;
-  out += group.rows.map(d => `<tr>
+  let out = `<tr class="month-group-header"><td colspan="9">📅 ${esc(titleCaseMonth(group.month))}${gapFlag}</td></tr>`;
+  out += group.rows.map(d => {
+    const k = dealKey(d);
+    const extra = live.overrides[k] || {};
+    freightTotal += Number(extra.freight) || 0;
+    taxTotal += Number(extra.tax) || 0;
+    return `<tr>
     <td>${esc(d.name)}</td>
     <td>${dateStr(d.closeDate)}</td>
     <td>${stagePill(d.stage)}</td>
@@ -1298,8 +1413,11 @@ function dealGroupRows(group, yd) {
     <td>${esc(d.owner || '—')}</td>
     <td class="num">${d.amount != null ? money(d.amount, 2) : '—'}</td>
     <td class="num">${d.collected != null ? money(d.collected, 2) : '—'}</td>
-  </tr>`).join('');
-  out += `<tr class="month-group-total"><td colspan="5">MONTHLY TOTAL (${num(wonRows.length)} deals)</td><td class="num">${money(wonAmount, 2)}</td><td></td></tr>`;
+    <td class="num"><input class="cell-edit no-print-input" type="text" data-deal-key="${esc(k)}" data-field="freight" value="${extra.freight != null ? Number(extra.freight).toFixed(2) : ''}" placeholder="—"></td>
+    <td class="num"><input class="cell-edit no-print-input" type="text" data-deal-key="${esc(k)}" data-field="tax" value="${extra.tax != null ? Number(extra.tax).toFixed(2) : ''}" placeholder="—"></td>
+  </tr>`;
+  }).join('');
+  out += `<tr class="month-group-total"><td colspan="5">MONTHLY TOTAL (${num(wonRows.length)} deals)</td><td class="num">${money(wonAmount, 2)}</td><td></td><td class="num">${freightTotal ? money(freightTotal, 2) : ''}</td><td class="num">${taxTotal ? money(taxTotal, 2) : ''}</td></tr>`;
   return out;
 }
 
@@ -1312,6 +1430,12 @@ function wireDealControls() {
   if (monthSel) monthSel.addEventListener('change', () => { state.dealMonth = monthSel.value; renderDealsOnly(); });
   const stageSel = document.getElementById('deal-stage-filter');
   if (stageSel) stageSel.addEventListener('change', () => { state.dealStage = stageSel.value; renderDealsOnly(); });
+  const orderSel = document.getElementById('deal-month-order-select');
+  if (orderSel) orderSel.addEventListener('change', () => {
+    state.dealMonthOrder = orderSel.value;
+    try { localStorage.setItem('sr_deal_month_order', state.dealMonthOrder); } catch (e) {}
+    renderDealsOnly();
+  });
   document.querySelectorAll('th[data-sort-key]').forEach(th => {
     th.addEventListener('click', () => {
       const key = th.getAttribute('data-sort-key');
@@ -1320,11 +1444,20 @@ function wireDealControls() {
       renderDealsOnly();
     });
   });
+  document.querySelectorAll('input.cell-edit[data-deal-key]').forEach(inp => {
+    inp.addEventListener('change', () => {
+      // Freight/Tax are per-deal-row values, stored in the same overrides
+      // collection as the month-level Commission/Outstanding overrides —
+      // the key just happens to be a deal composite instead of a month, so
+      // no new Firestore collection (and no new Rules entry) is needed.
+      App.saveOverride(inp.getAttribute('data-deal-key'), inp.getAttribute('data-field'), inp.value);
+    });
+  });
 }
 
 function renderDealsOnly() {
   const main = document.getElementById('main');
-  main.innerHTML = renderTabs() + renderDeals();
+  main.innerHTML = renderTabs() + renderExportToolbar() + renderDeals();
   wireDealControls();
   const search = document.getElementById('deal-search');
   if (search) {
@@ -1824,6 +1957,13 @@ const App = {
     saveTabs();
     renderTabSettingsList();
     render();
+  },
+
+  downloadCurrentTab() {
+    if (state.tab === 'overview') exportOverviewCSV();
+    else if (state.tab === 'materials') exportMaterialsCSV();
+    else if (state.tab === 'deals') exportDealsCSV();
+    else if (state.tab === 'pipeline') exportPipelineCSV();
   },
 };
 
