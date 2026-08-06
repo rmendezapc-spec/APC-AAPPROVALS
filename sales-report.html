@@ -167,6 +167,11 @@
   .modal-card .form-grid label { font-size: 11.5px; color: var(--ink-soft); }
   .modal-card select, .modal-card input[type=text] { font-size: 14px; }
   .modal-actions { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+  .gate-divider {
+    display: flex; align-items: center; gap: 10px; color: var(--muted);
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; margin: 14px 0;
+  }
+  .gate-divider::before, .gate-divider::after { content: ''; flex: 1; height: 1px; background: var(--line); }
   .tab-settings-row {
     display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--row-border);
   }
@@ -412,9 +417,13 @@
   <div class="modal-card">
     <h3>Log In</h3>
     <p class="panel-sub">Editing deal amounts, uploads, and collections is limited to admins and approvers on the Deal Approval Board — same accounts, same login. Viewing this report never requires logging in.</p>
-    <div id="login-form-fields" class="form-grid">
-      <div><label>Name</label><select id="login-user-select"></select></div>
-      <div><label>PIN</label><input type="password" id="login-pin-input" placeholder="Enter PIN"></div>
+    <div id="login-form-fields">
+      <button class="btn btn-primary" id="ms-login-btn" style="width:100%;" onclick="App.attemptMicrosoftLogin()">Sign in with Microsoft</button>
+      <div class="gate-divider"><span>or use your PIN</span></div>
+      <div class="form-grid">
+        <div><label>Name</label><select id="login-user-select"></select></div>
+        <div><label>PIN</label><input type="password" id="login-pin-input" placeholder="Enter PIN"></div>
+      </div>
     </div>
     <p class="panel-sub" id="login-status-text" style="display: none;"></p>
     <div class="modal-actions">
@@ -486,7 +495,7 @@
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.17.0/firebase-app.js";
   import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/12.17.0/firebase-firestore.js";
-  import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/12.17.0/firebase-auth.js";
+  import { getAuth, signInAnonymously, onAuthStateChanged, OAuthProvider, signInWithPopup, signOut } from "https://www.gstatic.com/firebasejs/12.17.0/firebase-auth.js";
 
   // Same Firebase project as the Deal Approval Board (index.html), so this
   // page's live data (uploads, collections, overrides) is shared across
@@ -507,14 +516,50 @@
   const db = getFirestore(firebaseApp);
   const auth = getAuth(firebaseApp);
 
+  // Same Firebase project/authDomain as the Deal Approval Board, so a
+  // Microsoft-authenticated session started there is often already restored
+  // here too (same-origin session persistence) — check for that first and
+  // never clobber it with a fresh anonymous session, which would silently
+  // downgrade the real identity back to an anonymous one.
   try {
-    await Promise.race([
-      signInAnonymously(auth),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('timed out')), 8000))
+    const restoredUser = await Promise.race([
+      new Promise((resolve) => {
+        const unsub = onAuthStateChanged(auth, (user) => { unsub(); resolve(user); });
+      }),
+      new Promise((resolve) => setTimeout(() => resolve(undefined), 8000)),
     ]);
+    if (!restoredUser) {
+      await Promise.race([
+        signInAnonymously(auth),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timed out')), 8000))
+      ]);
+    }
   } catch (e) {
-    console.error('Anonymous sign-in failed:', e);
+    console.error('Sign-in failed:', e);
   }
+
+  // Same Microsoft sign-in as the Deal Approval Board (index.html) — same
+  // tenant, same accounts. Kept here too so a viewer/admin who opens this
+  // page first (without ever visiting index.html first) can still sign in
+  // directly instead of having to detour through the other app.
+  const AZURE_TENANT_ID = '4e7bc0be-2ccd-4d9c-aeb5-55a5483c3314';
+  window.__srSignInMicrosoft = async function () {
+    try {
+      const provider = new OAuthProvider('microsoft.com');
+      provider.setCustomParameters({ tenant: AZURE_TENANT_ID, prompt: 'select_account' });
+      const result = await signInWithPopup(auth, provider);
+      const email = (result.user && result.user.email) || null;
+      if (!email) return { ok: false, error: 'Microsoft did not return an email address for this account.' };
+      return { ok: true, email };
+    } catch (e) {
+      console.error('Microsoft sign-in failed:', e);
+      return { ok: false, error: (e && e.message) || String(e) };
+    }
+  };
+
+  window.__srSignOut = async function () {
+    try { await signOut(auth); } catch (e) { console.error('Sign-out failed:', e); }
+  };
 
   const uploadsCollRef = collection(db, 'salesReportUploads');
   const collectionsCollRef = collection(db, 'salesReportCollections');
@@ -2494,6 +2539,7 @@ const App = {
     if (currentUser) {
       currentUser = null;
       try { localStorage.removeItem('apc_current_user_id'); } catch (e) {}
+      if (window.__srSignOut) window.__srSignOut();
       renderUserChrome();
       App.closeLogin();
       render();
@@ -2516,6 +2562,31 @@ const App = {
     renderUserChrome();
     App.closeLogin();
     render();
+  },
+
+  async attemptMicrosoftLogin() {
+    const msg = document.getElementById('login-msg');
+    const btn = document.getElementById('ms-login-btn');
+    if (!window.__srSignInMicrosoft) { msg.textContent = 'Microsoft sign-in is not available in this browser.'; return; }
+    msg.textContent = '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Signing in…'; }
+    try {
+      const result = await window.__srSignInMicrosoft();
+      if (!result.ok) { msg.textContent = 'Microsoft sign-in failed: ' + result.error; return; }
+      const email = result.email.trim().toLowerCase();
+      const user = allUsers.find(u => (u.email || '').trim().toLowerCase() === email);
+      if (!user) {
+        msg.textContent = `Signed in as ${result.email}, but no account here is set up for that address yet — ask an admin to add it under Manage Users on the Deal Board.`;
+        return;
+      }
+      currentUser = user;
+      try { localStorage.setItem('apc_current_user_id', user.id); } catch (e) {}
+      renderUserChrome();
+      App.closeLogin();
+      render();
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = 'Sign in with Microsoft'; }
+    }
   },
 
   downloadCurrentTab(format) {

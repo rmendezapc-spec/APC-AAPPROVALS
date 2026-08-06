@@ -4,20 +4,31 @@ rules_version = '2';
 // This repo has no Firebase CLI/deploy pipeline (see BUILDHANDOFF.md §7) — paste
 // this into Firebase Console -> Build -> Firestore Database -> Rules tab manually.
 //
-// Requires an authenticated Firebase session (the app signs in anonymously on
-// load — see the module script in index.html). This is a real access barrier:
-// a plain curl/API call with just the project config (which is public and
-// unavoidably visible in the page source) no longer gets in — it has to
-// establish a Firebase Auth session first. It does NOT distinguish which app
-// user is making the request (that's still the client-side name+PIN check in
-// index.html, a deterrent rather than real security) — anyone who loads the
-// real app still gets an anonymous session and full read/write access to
-// everything below. Revisit with real per-person Firebase Auth accounts if
-// that finer-grained boundary is needed later.
+// Requires an authenticated Firebase session. As of the Microsoft sign-in
+// rollout there are now TWO kinds of session that satisfy `request.auth !=
+// null` below, and this predicate does not yet distinguish between them:
+//   1. A real Microsoft/Entra ID session (primary login path, index.html and
+//      sales-report.html both offer "Sign in with Microsoft") — a genuine,
+//      verified identity tied to an @americanprecast.com account.
+//   2. An anonymous session (PIN-login fallback, kept so nobody is locked out
+//      if Microsoft sign-in has an issue) — anyone who loads the app still
+//      gets one of these automatically and it's just as privileged here.
+// In other words: this is still a real barrier against a bare curl/API call
+// with just the (public, unavoidably visible) project config, but NOT yet a
+// barrier that tells apart "signed in with a verified company identity" from
+// "clicked through the anonymous fallback." Tightening any match block below
+// to `if request.auth != null && request.auth.token.firebase.sign_in_provider
+// != 'anonymous'` would close that gap — but only do that once the PIN
+// fallback is retired (see CLAUDE.md/PR history), since it would otherwise
+// lock out anyone still using it.
 //
-// Requires the "Anonymous" sign-in provider enabled in Firebase Console ->
-// Build -> Authentication -> Sign-in method. Without it, signInAnonymously()
-// fails and the app falls back to showing its usual storage-error banner.
+// Requires BOTH the "Anonymous" AND "Microsoft" sign-in providers enabled in
+// Firebase Console -> Build -> Authentication -> Sign-in method. The
+// Microsoft provider needs an Application (client) ID + secret from an Azure
+// Entra ID app registration (single-tenant, restricted to the American
+// Precast Concrete tenant) — see the app's own chat/setup history for the
+// exact walkthrough. Without "Anonymous" enabled, signInAnonymously() fails
+// and the app falls back to showing its usual storage-error banner.
 service cloud.firestore {
   match /databases/{database}/documents {
     // Legacy single-document store (superseded by the `deals` collection
@@ -29,7 +40,8 @@ service cloud.firestore {
     match /deals/{document=**} {
       allow read, write: if request.auth != null;
     }
-    // Login accounts (name, PIN, role, approver slot).
+    // Login accounts (name, email, PIN, role, approver slot). The `email`
+    // field is what Microsoft sign-in matches a signed-in account against.
     match /users/{document=**} {
       allow read, write: if request.auth != null;
     }
@@ -52,6 +64,20 @@ service cloud.firestore {
     // Saved Cost Breakdown structures (e.g. "Main Template") applied when a
     // rep starts a new deal.
     match /dealTemplates/{document=**} {
+      allow read, write: if request.auth != null;
+    }
+    // Sales Report (sales-report.html) — new months added via its Upload tab.
+    match /salesReportUploads/{document=**} {
+      allow read, write: if request.auth != null;
+    }
+    // Sales Report — manually logged cash-collection entries.
+    match /salesReportCollections/{document=**} {
+      allow read, write: if request.auth != null;
+    }
+    // Sales Report — per-month/per-deal manual overrides (Commission,
+    // Freight, Tax, Collected, Material Type) and the shared tab layout
+    // (keyed '__tabConfig').
+    match /salesReportOverrides/{document=**} {
       allow read, write: if request.auth != null;
     }
   }
