@@ -248,6 +248,35 @@ already fixed in the current file — flagging so it isn't accidentally reintrod
   who have the link, NOT appropriate yet for data the business would consider
   seriously confidential (real client PII beyond what's already fairly public, etc.).
 
+**Update — Microsoft sign-in added.** Several rounds of work since the paragraphs
+above superseded most of them (real per-deal Firestore documents, a `users`
+collection with name/PIN/role instead of a single shared passphrase, and real
+Firestore Rules instead of test mode — see `firestore.rules` in this repo, which
+is the actual reference copy pasted into Firebase Console). The remaining real
+gap was #3 below: no verified identity, just a client-side name+PIN check. That's
+now addressed — both `index.html` and `sales-report.html` offer **"Sign in with
+Microsoft"** as the primary login path, using Firebase Auth's Microsoft/OAuth
+provider restricted to the American Precast Concrete Entra ID tenant (single
+sign-in flow shared by both pages, since they're the same Firebase project and
+persist the same session). PIN login is kept as a fallback so nobody is locked
+out by an Entra/tenant misconfiguration, which means Firestore Rules still can't
+fully distinguish "signed in with a verified company identity" from "used the PIN
+fallback" (see the comment block at the top of `firestore.rules` for the exact
+gap and what tightening it later would require). Each `users` document now also
+has an `email` field (editable in Manage Users) that Microsoft sign-in matches
+against to resolve who's logged in. A new `viewer` role was added alongside
+`rep`/`admin`/`approver` for people who need to see every deal, comment, and
+download scopes/estimates, but shouldn't start new deals (e.g. PM/Production
+Manager, Project Coordinator).
+
+**Residual gap worth flagging**: PINs are still stored in plaintext in the
+`users` collection and are readable by anyone with any authenticated session
+(anonymous fallback included), since the whole collection is subscribed to by
+the client. Not fixed as part of this change — a real fix means either hashing
+PINs (breaks the current "type a PIN" UX unless done server-side) or retiring
+the PIN fallback entirely once Microsoft sign-in has been proven reliable for a
+while.
+
 ---
 
 ## 7. Known limitations / good candidates for Claude Code to improve
@@ -266,10 +295,11 @@ already fixed in the current file — flagging so it isn't accidentally reintrod
    quality 0.72) and stored as data URLs directly in the deal record instead. Works,
    but doesn't scale indefinitely — true document uploads (PDFs etc.) aren't supported
    this way at all (1MB doc cap), only photos.
-3. **No real user identity/auth.** "Approve as Connor" is just a button anyone can
-   click — there's no login distinguishing who is actually Connor vs. Sandy vs. a rep.
-   Fine for a small trusted team; won't scale to a larger org without real auth
-   (Firebase Auth would be the natural next step).
+3. ~~No real user identity/auth.~~ **Addressed** — see the Microsoft sign-in update
+   in §6 above. Approving/rejecting is still just "whoever is logged into that
+   approver's seat," which is correct by design (Connor and Sandy are fixed named
+   seats), but that login is now backed by a real Microsoft-verified identity
+   rather than a client-side PIN comparison alone (PIN kept only as a fallback).
 4. **GitHub Pages deploy friction.** Recurring issue throughout this build: downloading
    a new HTML file from Claude and dragging it into GitHub's upload UI causes browser
    auto-renaming (`file (2).html`, `file (3).html`, etc.) when a same-named file

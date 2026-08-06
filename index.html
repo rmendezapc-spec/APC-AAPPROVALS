@@ -653,7 +653,7 @@
   .user-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
   .user-row {
     display: grid;
-    grid-template-columns: 1.2fr 1fr 1.4fr auto;
+    grid-template-columns: 1fr 1.3fr 1fr 1fr auto;
     gap: 10px;
     align-items: center;
   }
@@ -796,6 +796,22 @@
     min-height: 16px;
   }
   #gate .btn { width: 100%; }
+  #gate .gate-divider {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    margin: 16px 0 14px;
+  }
+  #gate .gate-divider::before, #gate .gate-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--line);
+  }
 </style>
 </head>
 <body>
@@ -806,9 +822,11 @@
     <div class="title">Deal Approval Board</div>
     <div class="subtitle">Sign in to continue</div>
     <div class="gate-error" id="gate-error"></div>
+    <button class="btn btn-primary" id="ms-login-btn" onclick="attemptMicrosoftLogin()">Sign in with Microsoft</button>
+    <div class="gate-divider"><span>or use your PIN</span></div>
     <select id="login-user-select"></select>
     <input type="password" id="login-pin-input" placeholder="PIN" onkeydown="if(event.key==='Enter') attemptLogin()">
-    <button class="btn btn-primary" onclick="attemptLogin()">Log In</button>
+    <button class="btn btn-outline" onclick="attemptLogin()">Log In</button>
   </div>
 </div>
 
@@ -823,7 +841,7 @@
   </div>
   <div class="nav">
     <button class="btn btn-ghost" onclick="App.goList()">All Deals</button>
-    <button class="btn btn-primary" onclick="App.goNewDeal()">+ New Deal</button>
+    <button class="btn btn-primary" id="new-deal-btn" onclick="App.goNewDeal()">+ New Deal</button>
     <a class="btn btn-ghost" href="sales-report.html">Sales Report</a>
     <div class="notif-wrap">
       <button class="btn btn-ghost icon-btn" id="notif-btn" onclick="toggleNotifMenu(event)" title="Notifications">
@@ -861,7 +879,7 @@
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.17.0/firebase-app.js";
   import { getFirestore, collection, doc, setDoc, deleteDoc, getDoc, getDocs, onSnapshot, query, where } from "https://www.gstatic.com/firebasejs/12.17.0/firebase-firestore.js";
-  import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/12.17.0/firebase-auth.js";
+  import { getAuth, signInAnonymously, onAuthStateChanged, OAuthProvider, signInWithPopup, signOut } from "https://www.gstatic.com/firebasejs/12.17.0/firebase-auth.js";
   import { getAI, getGenerativeModel, GoogleAIBackend } from "https://www.gstatic.com/firebasejs/12.17.0/firebase-ai.js";
 
   const firebaseConfig = {
@@ -907,24 +925,61 @@
     return result.response.text();
   };
 
-  // Firestore rules now require request.auth != null on every collection, so
-  // an anonymous session is the real access barrier: a plain curl/API call
+  // Firestore rules require request.auth != null on every collection, so some
+  // Firebase Auth session is the real access barrier: a plain curl/API call
   // with just the (public, unavoidably visible) project config no longer
-  // gets in — it has to actually establish a Firebase Auth session first,
-  // same as this page does. Top-level await here delays this module's
-  // completion (and therefore DOMContentLoaded) until sign-in resolves, so
-  // nothing below runs against Firestore before auth is ready. Raced against
-  // a timeout so a stuck sign-in can't block the whole gate from loading —
-  // Firestore calls below will just fail with a clear permission error
-  // instead, which the classic script surfaces on the gate screen.
+  // gets in. Microsoft sign-in (see __firebaseSignInMicrosoft below) is now
+  // the primary login path and persists its own real session across page
+  // loads — so first check whether one is already restored before ever
+  // falling back to an anonymous session, otherwise a returning Microsoft
+  // user would get silently signed out of their real identity and back into
+  // an anonymous one on every reload. Top-level await here delays this
+  // module's completion (and therefore DOMContentLoaded) until that's
+  // settled, raced against a timeout so a stuck sign-in can't block the
+  // whole gate from loading — Firestore calls below just fail with a clear
+  // permission error instead, which the classic script surfaces on the gate.
   try {
-    await Promise.race([
-      signInAnonymously(auth),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('timed out')), 8000))
+    const restoredUser = await Promise.race([
+      new Promise((resolve) => {
+        const unsub = onAuthStateChanged(auth, (user) => { unsub(); resolve(user); });
+      }),
+      new Promise((resolve) => setTimeout(() => resolve(undefined), 8000)),
     ]);
+    if (!restoredUser) {
+      await Promise.race([
+        signInAnonymously(auth),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timed out')), 8000))
+      ]);
+    }
   } catch (e) {
-    console.error('Anonymous sign-in failed:', e);
+    console.error('Sign-in failed:', e);
   }
+
+  // Microsoft sign-in via Entra ID (Azure AD), restricted to the American
+  // Precast Concrete tenant — see AZURE_TENANT_ID below, set up per the
+  // walkthrough in this project's chat history / README. This REPLACES the
+  // anonymous session with a real, verified identity; the classic script
+  // matches the resulting email against a `users` document to decide who's
+  // logged in, same as the PIN flow does, just without a spoofable
+  // client-side-only credential.
+  const AZURE_TENANT_ID = '4e7bc0be-2ccd-4d9c-aeb5-55a5483c3314';
+  window.__firebaseSignInMicrosoft = async function () {
+    try {
+      const provider = new OAuthProvider('microsoft.com');
+      provider.setCustomParameters({ tenant: AZURE_TENANT_ID, prompt: 'select_account' });
+      const result = await signInWithPopup(auth, provider);
+      const email = (result.user && result.user.email) || null;
+      if (!email) return { ok: false, error: 'Microsoft did not return an email address for this account.' };
+      return { ok: true, email };
+    } catch (e) {
+      console.error('Microsoft sign-in failed:', e);
+      return { ok: false, error: (e && e.message) || String(e) };
+    }
+  };
+
+  window.__firebaseSignOut = async function () {
+    try { await signOut(auth); } catch (e) { console.error('Sign-out failed:', e); }
+  };
 
   // Legacy single-document store (one JSON blob for every deal). Superseded
   // by the `deals` collection below, kept only as a one-time migration source.
@@ -1019,24 +1074,34 @@
   };
 
   // Seed of the base accounts (Sandy and Connor as the two fixed approver
-  // seats, Richard as an admin, Fidel as a rep). Backfills whichever of
-  // these specific IDs are still missing rather than bailing out if the
-  // collection is non-empty, so adding a new base account later (like
-  // Richard) still lands even if the others were already seeded/edited.
+  // seats, Richard/Navid as admins, Fidel as a rep, Christina/Russell as
+  // viewers — view/comment/download, no deal creation). Backfills whichever
+  // of these specific IDs are still missing rather than bailing out if the
+  // collection is non-empty, so adding a new base account later still lands
+  // even if the others were already seeded/edited. Also backfills just the
+  // `email` field onto an account that already existed before Microsoft
+  // sign-in was added, without touching anything an admin has since edited
+  // (name/pin/role) on that account.
   window.__firebaseSeedUsers = async function () {
     try {
       const existing = await getDocs(usersCollRef);
-      const existingIds = new Set();
-      existing.forEach((d) => existingIds.add(d.id));
+      const existingById = new Map();
+      existing.forEach((d) => existingById.set(d.id, d.data()));
       const seed = [
-        { id: 'usr_sandy', name: 'Sandy', pin: 'SANDY888', role: 'approver', approverSlot: 'sandy', createdAt: Date.now() },
-        { id: 'usr_connor', name: 'Connor', pin: 'CONNOR2385', role: 'approver', approverSlot: 'connor', createdAt: Date.now() },
-        { id: 'usr_richard', name: 'Richard', pin: 'Warrior662!', role: 'admin', approverSlot: null, createdAt: Date.now() },
-        { id: 'usr_fidel', name: 'Fidel', pin: 'FIDEL1234', role: 'rep', approverSlot: null, createdAt: Date.now() }
+        { id: 'usr_sandy', name: 'Sandy', pin: 'SANDY888', role: 'approver', approverSlot: 'sandy', email: 'sandy@americanprecast.com', createdAt: Date.now() },
+        { id: 'usr_connor', name: 'Connor', pin: 'CONNOR2385', role: 'approver', approverSlot: 'connor', email: 'connor@americanprecast.com', createdAt: Date.now() },
+        { id: 'usr_richard', name: 'Richard', pin: 'Warrior662!', role: 'admin', approverSlot: null, email: 'richard@americanprecast.com', createdAt: Date.now() },
+        { id: 'usr_fidel', name: 'Fidel', pin: 'FIDEL1234', role: 'rep', approverSlot: null, email: 'fidel@americanprecast.com', createdAt: Date.now() },
+        { id: 'usr_navid', name: 'Navid', pin: 'NAVID7741', role: 'admin', approverSlot: null, email: 'navid@americanprecast.com', createdAt: Date.now() },
+        { id: 'usr_christina', name: 'Christina Aviles', pin: 'CHRISTINA5290', role: 'viewer', approverSlot: null, email: 'christina.aviles@americanprecast.com', createdAt: Date.now() },
+        { id: 'usr_russell', name: 'Russell', pin: 'RUSSELL3168', role: 'viewer', approverSlot: null, email: 'russell@americanprecast.com', createdAt: Date.now() },
       ];
       for (const user of seed) {
-        if (!existingIds.has(user.id)) {
+        const existingDoc = existingById.get(user.id);
+        if (!existingDoc) {
           await setDoc(doc(usersCollRef, user.id), user);
+        } else if (!existingDoc.email && user.email) {
+          await setDoc(doc(usersCollRef, user.id), { email: user.email }, { merge: true });
         }
       }
     } catch (e) {
@@ -1390,6 +1455,8 @@ function populateUserSelect() {
 function updateUserChrome() {
   const label = document.getElementById('current-user-label');
   if (label) label.textContent = currentUser ? ('Logged in as ' + currentUser.name) : '';
+  const newDealBtn = document.getElementById('new-deal-btn');
+  if (newDealBtn) newDealBtn.style.display = canAddDeals(currentUser) ? '' : 'none';
   const manageBtn = document.getElementById('manage-users-btn');
   if (manageBtn) manageBtn.style.display = isAdminUser(currentUser) ? '' : 'none';
   const templatesBtn = document.getElementById('manage-templates-btn');
@@ -1443,6 +1510,35 @@ function attemptLogin() {
   enterApp();
 }
 
+async function attemptMicrosoftLogin() {
+  const errorEl = document.getElementById('gate-error');
+  const btn = document.getElementById('ms-login-btn');
+  if (!window.__firebaseSignInMicrosoft) {
+    errorEl.textContent = 'Microsoft sign-in is not available in this browser.';
+    return;
+  }
+  errorEl.textContent = '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Signing in…'; }
+  try {
+    const result = await window.__firebaseSignInMicrosoft();
+    if (!result.ok) {
+      errorEl.textContent = 'Microsoft sign-in failed: ' + result.error;
+      return;
+    }
+    const email = result.email.trim().toLowerCase();
+    const user = allUsers.find(u => (u.email || '').trim().toLowerCase() === email);
+    if (!user) {
+      errorEl.textContent = `Signed in as ${result.email}, but no account here is set up for that address yet — ask an admin to add it under Manage Users.`;
+      return;
+    }
+    currentUser = user;
+    try { localStorage.setItem('apc_current_user_id', user.id); } catch (e) {}
+    enterApp();
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Sign in with Microsoft'; }
+  }
+}
+
 function enterApp() {
   document.getElementById('gate').style.display = 'none';
   document.getElementById('app').style.display = 'block';
@@ -1455,6 +1551,10 @@ function enterApp() {
 function logout() {
   currentUser = null;
   try { localStorage.removeItem('apc_current_user_id'); } catch (e) {}
+  // End the real Firebase Auth session too (not just the app's own notion of
+  // "who's logged in") — otherwise a Microsoft-authenticated session would
+  // just get silently restored again on the next page load.
+  if (window.__firebaseSignOut) window.__firebaseSignOut();
   if (notifUnsubscribe) { notifUnsubscribe(); notifUnsubscribe = null; }
   notifications = [];
   renderNotifChrome();
@@ -1667,6 +1767,13 @@ function uid(prefix) { return prefix + '_' + Date.now() + '_' + Math.floor(Math.
 // access without an approval seat of their own.
 function isAdminUser(user) {
   return !!user && (user.role === 'approver' || user.role === 'admin');
+}
+
+// Viewers (e.g. Project Coordinator / Production Manager) can see every deal,
+// comment in Discussion, and download scopes/estimates the same as a rep —
+// they just can't start a new one.
+function canAddDeals(user) {
+  return !!user && user.role !== 'viewer';
 }
 
 function money(n) {
@@ -2840,6 +2947,7 @@ const App = {
   // none exist yet) rather than always starting empty — fresh ids per
   // section/item so editing this deal never mutates the template itself.
   goNewDeal() {
+    if (!canAddDeals(currentUser)) return;
     draftDeal = blankDeal();
     const template = dealTemplates.find(t => t.name === 'Main Template') || dealTemplates[0];
     if (template) {
@@ -3668,11 +3776,13 @@ const App = {
   async addUser() {
     if (!isAdminUser(currentUser)) return;
     const nameInput = document.getElementById('new-user-name');
+    const emailInput = document.getElementById('new-user-email');
     const pinInput = document.getElementById('new-user-pin');
     const roleSelect = document.getElementById('new-user-role');
     const name = (nameInput.value || '').trim();
+    const email = (emailInput.value || '').trim();
     const pin = (pinInput.value || '').trim();
-    const role = roleSelect.value === 'admin' ? 'admin' : 'rep';
+    const role = (roleSelect.value === 'admin' || roleSelect.value === 'viewer') ? roleSelect.value : 'rep';
     if (!name || !pin) {
       alert('Enter a name and a PIN for the new user.');
       return;
@@ -3681,9 +3791,10 @@ const App = {
       alert('A user named "' + name + '" already exists.');
       return;
     }
-    const user = { id: uid('usr'), name, pin, role, approverSlot: null, createdAt: Date.now() };
+    const user = { id: uid('usr'), name, email: email || null, pin, role, approverSlot: null, createdAt: Date.now() };
     if (window.__firebaseSaveUser) await window.__firebaseSaveUser(user);
     nameInput.value = '';
+    emailInput.value = '';
     pinInput.value = '';
     roleSelect.value = 'rep';
     render();
@@ -4812,11 +4923,14 @@ function renderUsers() {
       ? `<div class="user-role">Approver — ${u.approverSlot === 'connor' ? "Connor's seat" : "Sandy's seat"}</div>`
       : `<select class="user-role-select" onchange="App.updateUserField('${u.id}','role', this.value); App.saveUserField('${u.id}')">
           <option value="rep" ${u.role === 'rep' ? 'selected' : ''}>Rep</option>
+          <option value="viewer" ${u.role === 'viewer' ? 'selected' : ''}>Viewer</option>
           <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin</option>
         </select>`;
     return `<div class="user-row">
       <input type="text" value="${esc(u.name)}" class="user-name-input"
         onchange="App.updateUserField('${u.id}','name', this.value); App.saveUserField('${u.id}')">
+      <input type="email" value="${esc(u.email || '')}" class="user-email-input" placeholder="name@americanprecast.com"
+        onchange="App.updateUserField('${u.id}','email', this.value); App.saveUserField('${u.id}')">
       <input type="password" value="" class="user-pin-input" placeholder="New PIN (leave blank to keep)"
         onchange="App.resetUserPin('${u.id}', this.value); this.value='';">
       ${roleCell}
@@ -4830,20 +4944,22 @@ function renderUsers() {
     <h2>Manage Users</h2>
     <div class="user-list">
       <div class="user-row user-row-head">
-        <div>Name</div><div>PIN</div><div>Role</div><div></div>
+        <div>Name</div><div>Email (for Microsoft sign-in)</div><div>PIN</div><div>Role</div><div></div>
       </div>
       ${rows}
     </div>
     <div class="user-row user-row-add">
       <input type="text" id="new-user-name" placeholder="New user's name">
+      <input type="email" id="new-user-email" placeholder="name@americanprecast.com">
       <input type="text" id="new-user-pin" placeholder="PIN">
       <select id="new-user-role">
         <option value="rep" selected>Rep</option>
+        <option value="viewer">Viewer</option>
         <option value="admin">Admin</option>
       </select>
       <button class="btn btn-primary btn-small" onclick="App.addUser()">Add User</button>
     </div>
-    <p class="attach-hint" style="margin-top:10px;">Reps can submit deals, edit their own rejected deals, and post in Discussion, but can't approve or reject. Admins get this Manage Users page too, same as Reps otherwise. Only Connor and Sandy's own seats can approve; rename either account above to hand that seat to someone else.</p>
+    <p class="attach-hint" style="margin-top:10px;">Reps can submit deals, edit their own rejected deals, and post in Discussion, but can't approve or reject. Viewers can see every deal, comment, and download scopes/estimates, but can't start a new deal. Admins get this Manage Users page too, same as Reps/Viewers otherwise. Only Connor and Sandy's own seats can approve; rename either account above to hand that seat to someone else. The Email field is what Microsoft sign-in matches against — leave it blank to keep that account PIN-only.</p>
   </div>`;
 }
 
