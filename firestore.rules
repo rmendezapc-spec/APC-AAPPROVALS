@@ -4,56 +4,56 @@ rules_version = '2';
 // This repo has no Firebase CLI/deploy pipeline (see BUILDHANDOFF.md §7) — paste
 // this into Firebase Console -> Build -> Firestore Database -> Rules tab manually.
 //
-// Requires an authenticated Firebase session. As of the Microsoft sign-in
-// rollout there are now TWO kinds of session that satisfy `request.auth !=
-// null` below, and this predicate does not yet distinguish between them:
-//   1. A real Microsoft/Entra ID session (primary login path, index.html and
-//      sales-report.html both offer "Sign in with Microsoft") — a genuine,
-//      verified identity tied to an @americanprecast.com account.
-//   2. An anonymous session (PIN-login fallback, kept so nobody is locked out
-//      if Microsoft sign-in has an issue) — anyone who loads the app still
-//      gets one of these automatically and it's just as privileged here.
-// In other words: this is still a real barrier against a bare curl/API call
-// with just the (public, unavoidably visible) project config, but NOT yet a
-// barrier that tells apart "signed in with a verified company identity" from
-// "clicked through the anonymous fallback." Tightening every match block
-// below the same way would close that gap fully — but only do that once the
-// PIN fallback is retired, since it would otherwise lock out anyone still
-// using it for everyday app usage (viewing/editing deals, the Sales Report).
+// ROUND 2 (this pass): the PIN-login fallback has been retired app-side (both
+// index.html and sales-report.html now sign in via Microsoft/Entra ID only —
+// see isMicrosoftAuthed's old call sites, now gone). That closes the gap Round
+// 1 flagged but didn't fully fix: an anonymous session used to be JUST AS
+// PRIVILEGED as a real one for every collection except `users`. Now that every
+// legitimate write comes from a signed-in Microsoft session, isRealUser()
+// below requires exactly that (non-anonymous) for every collection that only
+// ever needs to be touched after login — which, since PIN is gone, is now all
+// of index.html's collections and the write side of the Sales Report's.
 //
-// ROUND 1 (this pass) tightens just the `users` collection ahead of that —
-// see its own match block below for why: it's the one place a client-side-
-// only check was a real privilege-escalation hole (anyone could otherwise
-// grant themselves 'admin' with a raw Firestore write), and unlike everyday
-// deal/report usage, managing user accounts is reasonable to require a real
-// identity for even before the PIN fallback is fully retired elsewhere.
+// Reads on the three salesReport* collections deliberately stay open to
+// anonymous sessions — viewing the Sales Report has always been a no-login-
+// required feature (see SPEC.md), and that's unchanged. The `users` collection
+// also keeps open reads (`request.auth != null`, anonymous included) for one
+// specific reason: the pre-login bootstrap in both apps reads the full roster
+// before the Microsoft popup even opens (so the email→account match resolves
+// instantly once it does), and that read necessarily happens over whatever
+// session exists at that moment, which is an anonymous one for a first-time
+// visitor. `users` writes were already tightened to isAdminOrApproverEmail()
+// in Round 1 and are unchanged here (the self-service-PIN-change carve-out
+// from that round is gone too, since there's no more PIN to change).
 //
 // Requires BOTH the "Anonymous" AND "Microsoft" sign-in providers enabled in
-// Firebase Console -> Build -> Authentication -> Sign-in method. The
-// Microsoft provider needs an Application (client) ID + secret from an Azure
-// Entra ID app registration (single-tenant, restricted to the American
-// Precast Concrete tenant) — see the app's own chat/setup history for the
-// exact walkthrough. Without "Anonymous" enabled, signInAnonymously() fails
-// and the app falls back to showing its usual storage-error banner.
+// Firebase Console -> Build -> Authentication -> Sign-in method — "Anonymous"
+// is still needed for the two read-only cases above (Sales Report viewing,
+// pre-login roster bootstrap), not as a login path anymore. Disabling it
+// entirely is a possible future step, but would also remove those two read
+// paths — see BUILDHANDOFF.md §6 for that tradeoff before flipping it.
 service cloud.firestore {
   match /databases/{database}/documents {
-    // ROUND 1 of tightening (see the note above): the `users` collection is
-    // the one place a client-side-only check was a real privilege-escalation
+    // Requires a real, non-anonymous Firebase Auth session — i.e. someone
+    // actually signed in with Microsoft, not just the automatic anonymous
+    // session every visitor gets. Safe to require everywhere below now that
+    // PIN login (which relied on an anonymous session) has been retired.
+    function isRealUser() {
+      return request.auth != null
+        && request.auth.token.firebase.sign_in_provider != 'anonymous';
+    }
+    // The one place a client-side-only check was a real privilege-escalation
     // hole — the app's role gating (isAdminUser/canAddDeals) only controls
-    // what buttons render, so anyone with dev tools open could otherwise
-    // call the same Firestore write directly and grant themselves 'admin'.
-    // These two helpers require a REAL Microsoft-verified identity (an
-    // anonymous PIN-fallback session has no email claim and always fails
-    // both) — deliberately narrower than the `request.auth != null` used
-    // everywhere else in this file for now. Emails are hardcoded here rather
-    // than looked up from the `users` collection itself, since Firestore
-    // Rules can only `get()` a known document path and these `users` docs
-    // are keyed by an app-generated id (e.g. 'usr_richard'), not by Firebase
-    // Auth uid or email — there's no query path from "the caller's verified
-    // email" to "their own doc" otherwise. Keep this list in sync with
-    // Manage Users' admin/approver accounts by hand (no deploy pipeline —
-    // see BUILDHANDOFF.md §7 — so this always needs a manual re-paste here
-    // when the admin/approver roster changes).
+    // what buttons render, so anyone with dev tools open could otherwise call
+    // the same Firestore write directly and grant themselves 'admin'. Emails
+    // are hardcoded here rather than looked up from the `users` collection
+    // itself, since Firestore Rules can only `get()` a known document path
+    // and these `users` docs are keyed by an app-generated id (e.g.
+    // 'usr_richard'), not by Firebase Auth uid or email — there's no query
+    // path from "the caller's verified email" to "their own doc" otherwise.
+    // Keep this list in sync with Manage Users' admin/approver accounts by
+    // hand (no deploy pipeline — see BUILDHANDOFF.md §7 — so this always
+    // needs a manual re-paste here when the admin/approver roster changes).
     function isAdminOrApproverEmail() {
       return request.auth != null
         && request.auth.token.firebase.sign_in_provider == 'microsoft.com'
@@ -64,78 +64,66 @@ service cloud.firestore {
           'connor@americanprecast.com'
         ];
     }
-    // Self-service "Change Password": lets a signed-in Microsoft user update
-    // ONLY the `pin` field of their own account doc (matched by their
-    // verified email against the doc's stored `email`, since again there's
-    // no uid-keyed lookup available). `affectedKeys().hasOnly(['pin'])`
-    // blocks using this same path to sneak in a `role` or `email` change on
-    // your own account.
-    function isSelfPinChange() {
-      return request.auth != null
-        && request.auth.token.firebase.sign_in_provider == 'microsoft.com'
-        && resource != null
-        && resource.data.email is string
-        && request.auth.token.email.lower() == resource.data.email.lower()
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['pin']);
-    }
 
     // Legacy single-document store (superseded by the `deals` collection
     // below), kept only so the one-time migration read still works.
     match /apcDealBoard/{document=**} {
-      allow read, write: if request.auth != null;
+      allow read, write: if isRealUser();
     }
     // One document per deal.
     match /deals/{document=**} {
-      allow read, write: if request.auth != null;
+      allow read, write: if isRealUser();
     }
-    // Login accounts (name, email, PIN, role, approver slot). The `email`
-    // field is what Microsoft sign-in matches a signed-in account against.
-    // Reads stay open (the login gate needs the whole roster before it can
-    // know who's an admin) — see the residual plaintext-PIN-read gap noted
-    // in BUILDHANDOFF.md §6. Writes now require a real Microsoft-verified
-    // admin/approver, or a self-service PIN-only change on your own account
-    // — this means the PIN-fallback path can no longer manage users or
-    // change its own password; the client hides those UI paths accordingly
-    // when not signed in via Microsoft (see index.html's isMicrosoftAuthed).
+    // Login accounts (name, email, role, approver slot). The `email` field is
+    // what Microsoft sign-in matches a signed-in account against. Reads stay
+    // open to any session, anonymous included (the login gate needs the
+    // whole roster before Microsoft sign-in even opens) — see the residual
+    // plaintext-data-read note in BUILDHANDOFF.md §6. Writes require a real
+    // Microsoft-verified admin/approver.
     match /users/{document} {
       allow read: if request.auth != null;
-      allow create, delete: if isAdminOrApproverEmail();
-      allow update: if isAdminOrApproverEmail() || isSelfPinChange();
+      allow create, update, delete: if isAdminOrApproverEmail();
     }
     // Reusable proposal boilerplate (scope of work, terms, exclusions, etc.)
     match /templates/{document=**} {
-      allow read, write: if request.auth != null;
+      allow read, write: if isRealUser();
     }
     // App-wide settings, e.g. Material Calculator per-LF base prices.
     match /settings/{document=**} {
-      allow read, write: if request.auth != null;
+      allow read, write: if isRealUser();
     }
     // Per-user inbox notifications (Proposal/Handoff/Engineering assignments).
     match /notifications/{document=**} {
-      allow read, write: if request.auth != null;
+      allow read, write: if isRealUser();
     }
     // Shared cost code library, attached to line items on the Cost Breakdown.
     match /costCodes/{document=**} {
-      allow read, write: if request.auth != null;
+      allow read, write: if isRealUser();
     }
     // Saved Cost Breakdown structures (e.g. "Main Template") applied when a
     // rep starts a new deal.
     match /dealTemplates/{document=**} {
-      allow read, write: if request.auth != null;
+      allow read, write: if isRealUser();
     }
     // Sales Report (sales-report.html) — new months added via its Upload tab.
+    // Reads stay open to anonymous sessions (viewing the report never
+    // requires logging in); writes require a real Microsoft session, same as
+    // the client already restricts to admins/approvers.
     match /salesReportUploads/{document=**} {
-      allow read, write: if request.auth != null;
+      allow read: if request.auth != null;
+      allow write: if isRealUser();
     }
     // Sales Report — manually logged cash-collection entries.
     match /salesReportCollections/{document=**} {
-      allow read, write: if request.auth != null;
+      allow read: if request.auth != null;
+      allow write: if isRealUser();
     }
     // Sales Report — per-month/per-deal manual overrides (Commission,
     // Freight, Tax, Collected, Material Type) and the shared tab layout
     // (keyed '__tabConfig').
     match /salesReportOverrides/{document=**} {
-      allow read, write: if request.auth != null;
+      allow read: if request.auth != null;
+      allow write: if isRealUser();
     }
   }
 }

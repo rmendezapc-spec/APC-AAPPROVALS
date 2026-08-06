@@ -250,34 +250,49 @@ already fixed in the current file — flagging so it isn't accidentally reintrod
   who have the link, NOT appropriate yet for data the business would consider
   seriously confidential (real client PII beyond what's already fairly public, etc.).
 
-**Update — Microsoft sign-in added.** Several rounds of work since the paragraphs
-above superseded most of them (real per-deal Firestore documents, a `users`
-collection with name/PIN/role instead of a single shared passphrase, and real
-Firestore Rules instead of test mode — see `firestore.rules` in this repo, which
-is the actual reference copy pasted into Firebase Console). The remaining real
-gap was #3 below: no verified identity, just a client-side name+PIN check. That's
-now addressed — both `index.html` and `sales-report.html` offer **"Sign in with
-Microsoft"** as the primary login path, using Firebase Auth's Microsoft/OAuth
-provider restricted to the American Precast Concrete Entra ID tenant (single
-sign-in flow shared by both pages, since they're the same Firebase project and
-persist the same session). PIN login is kept as a fallback so nobody is locked
-out by an Entra/tenant misconfiguration, which means Firestore Rules still can't
-fully distinguish "signed in with a verified company identity" from "used the PIN
-fallback" (see the comment block at the top of `firestore.rules` for the exact
-gap and what tightening it later would require). Each `users` document now also
-has an `email` field (editable in Manage Users) that Microsoft sign-in matches
-against to resolve who's logged in. A new `viewer` role was added alongside
-`rep`/`admin`/`approver` for people who need to see every deal, comment, and
-download scopes/estimates, but shouldn't start new deals (e.g. PM/Production
-Manager, Project Coordinator).
+**Update — Microsoft sign-in added, then made the only login path.** Several
+rounds of work since the paragraphs above superseded most of them (real
+per-deal Firestore documents, a `users` collection with name/email/role
+instead of a single shared passphrase, and real Firestore Rules instead of
+test mode — see `firestore.rules` in this repo, which is the actual reference
+copy pasted into Firebase Console). The remaining real gap was #3 below: no
+verified identity, just a client-side check. That's now fully addressed —
+both `index.html` and `sales-report.html` sign in **only** via **"Sign in
+with Microsoft"**, using Firebase Auth's Microsoft/OAuth provider restricted
+to the American Precast Concrete Entra ID tenant (single sign-in flow shared
+by both pages, since they're the same Firebase project and persist the same
+session). Each `users` document has an `email` field (editable in Manage
+Users) that Microsoft sign-in matches against to resolve who's logged in. A
+`viewer` role exists alongside `rep`/`admin`/`approver` for people who need to
+see every deal, comment, and download scopes/estimates, but shouldn't start
+new deals (e.g. PM/Production Manager, Project Coordinator).
 
-**Residual gap worth flagging**: PINs are still stored in plaintext in the
-`users` collection and are readable by anyone with any authenticated session
-(anonymous fallback included), since the whole collection is subscribed to by
-the client. Not fixed as part of this change — a real fix means either hashing
-PINs (breaks the current "type a PIN" UX unless done server-side) or retiring
-the PIN fallback entirely once Microsoft sign-in has been proven reliable for a
-while.
+An interim PIN-login fallback existed briefly (so nobody would be locked out
+while Microsoft sign-in was still being proven reliable) but has since been
+retired app-side — this was a deliberate call made while the tool was still
+in testing, not yet rolled out company-wide, so the blast radius of anything
+going wrong was small. Firestore Rules now require a real, non-anonymous
+Microsoft session (`isRealUser()`) for every collection except read access on
+`users` and the three `salesReport*` collections, which stay open to
+anonymous sessions on purpose (the pre-login roster bootstrap, and the Sales
+Report's no-login-required viewing — see the comment block at the top of
+`firestore.rules`). The `pin` field itself is still present (unused) on
+existing `users` documents — nothing reads or writes it anymore, and new
+accounts are created without one.
+
+**Residual items, in order of what's left**:
+1. The "Anonymous" sign-in provider is still enabled in Firebase Console —
+   intentionally, since it still serves the two read-only cases above. Fully
+   disabling it is possible but would also remove those two read paths; see
+   the tradeoff noted in `firestore.rules`' top comment before flipping it.
+2. `isAdminOrApproverEmail()` in `firestore.rules` is a hardcoded email list,
+   not a live lookup — adding/removing an admin or approver in Manage Users
+   changes what the *app* shows immediately, but doesn't change who Firestore
+   actually trusts as one until this list is manually updated and re-pasted
+   into Firebase Console. Keep these in sync by hand.
+3. Stale `pin` field values remain in Firestore on accounts created before
+   this round — harmless (nothing reads them), but worth a one-time cleanup
+   if that data hygiene ever matters.
 
 ---
 

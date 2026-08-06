@@ -167,11 +167,6 @@
   .modal-card .form-grid label { font-size: 11.5px; color: var(--ink-soft); }
   .modal-card select, .modal-card input[type=text] { font-size: 14px; }
   .modal-actions { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
-  .gate-divider {
-    display: flex; align-items: center; gap: 10px; color: var(--muted);
-    font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; margin: 14px 0;
-  }
-  .gate-divider::before, .gate-divider::after { content: ''; flex: 1; height: 1px; background: var(--line); }
   .tab-settings-row {
     display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--row-border);
   }
@@ -419,18 +414,13 @@
     <p class="panel-sub">Editing deal amounts, uploads, and collections is limited to admins and approvers on the Deal Approval Board — same accounts, same login. Viewing this report never requires logging in.</p>
     <div id="login-form-fields">
       <button class="btn btn-primary" id="ms-login-btn" style="width:100%;" onclick="App.attemptMicrosoftLogin()">Sign in with Microsoft</button>
-      <div class="gate-divider"><span>or use your PIN</span></div>
-      <div class="form-grid">
-        <div><label>Name</label><select id="login-user-select"></select></div>
-        <div><label>PIN</label><input type="password" id="login-pin-input" placeholder="Enter PIN"></div>
-      </div>
     </div>
     <p class="panel-sub" id="login-status-text" style="display: none;"></p>
     <div class="modal-actions">
       <span class="footnote" id="login-msg"></span>
       <div>
         <button class="btn btn-outline btn-small" onclick="App.closeLogin()">Cancel</button>
-        <button class="btn btn-primary" id="login-submit-btn" onclick="App.submitLogin()">Log In</button>
+        <button class="btn btn-primary" id="login-submit-btn" onclick="App.submitLogin()" style="display:none;">Log Out</button>
       </div>
     </div>
   </div>
@@ -2518,15 +2508,9 @@ const App = {
     document.getElementById('login-msg').textContent = '';
     document.getElementById('login-form-fields').style.display = isLoggedIn ? 'none' : '';
     document.getElementById('login-status-text').style.display = isLoggedIn ? '' : 'none';
-    document.getElementById('login-submit-btn').textContent = isLoggedIn ? 'Log Out' : 'Log In';
+    document.getElementById('login-submit-btn').style.display = isLoggedIn ? '' : 'none';
     if (isLoggedIn) {
       document.getElementById('login-status-text').textContent = `Logged in as ${currentUser.name} (${currentUser.role}).`;
-    } else {
-      const sel = document.getElementById('login-user-select');
-      sel.innerHTML = allUsers.length
-        ? allUsers.map(u => `<option value="${esc(u.id)}">${esc(u.name)}</option>`).join('')
-        : '<option value="">No accounts loaded yet</option>';
-      document.getElementById('login-pin-input').value = '';
     }
     document.getElementById('login-overlay').classList.add('open');
     document.body.style.overflow = 'hidden';
@@ -2535,30 +2519,12 @@ const App = {
     document.getElementById('login-overlay').classList.remove('open');
     document.body.style.overflow = '';
   },
+  // Only reachable when already logged in (see openLogin) — the "Log In"
+  // path is the Microsoft button above, this button only ever says "Log Out".
   submitLogin() {
-    if (currentUser) {
-      currentUser = null;
-      try { localStorage.removeItem('apc_current_user_id'); } catch (e) {}
-      if (window.__srSignOut) window.__srSignOut();
-      renderUserChrome();
-      App.closeLogin();
-      render();
-      return;
-    }
-    const sel = document.getElementById('login-user-select');
-    const pinInput = document.getElementById('login-pin-input');
-    const msg = document.getElementById('login-msg');
-    const user = allUsers.find(u => u.id === sel.value);
-    if (!user) { msg.textContent = 'No account selected — try again once accounts finish loading.'; return; }
-    const val = (pinInput.value || '').trim();
-    if (val.toUpperCase() !== (user.pin || '').toUpperCase()) {
-      msg.textContent = 'Incorrect PIN — try again.';
-      pinInput.value = '';
-      pinInput.focus();
-      return;
-    }
-    currentUser = user;
-    try { localStorage.setItem('apc_current_user_id', user.id); } catch (e) {}
+    currentUser = null;
+    try { localStorage.removeItem('apc_current_user_id'); } catch (e) {}
+    if (window.__srSignOut) window.__srSignOut();
     renderUserChrome();
     App.closeLogin();
     render();
