@@ -1494,7 +1494,15 @@ function subscribeToUsersOnce() {
         const updated = allUsers.find(u => u.id === currentUser.id);
         if (updated) { currentUser = updated; updateUserChrome(); }
       }
-      if (currentView !== 'form') render();
+      // Skip the auto-refresh while actively editing the deal form OR the
+      // Manage Users table — a full re-render mid-edit rebuilds every input
+      // in the table from scratch, which resets/loses whatever field you
+      // were mid-click on (this is what caused the PIN field to visually
+      // "flash" and made the role dropdowns look unresponsive: your own
+      // save's resulting snapshot event was rebuilding the table out from
+      // under your click). Manage Users re-renders explicitly after each
+      // save instead (see saveUserField/resetUserPin/addUser/removeUser).
+      if (currentView !== 'form' && currentView !== 'users') render();
       if (!settled) { settled = true; resolve(); }
     }, (err) => {
       gateLoadError = (err && err.message) || String(err);
