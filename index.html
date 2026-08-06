@@ -1442,7 +1442,16 @@
 // chat messages automatically.
 let allUsers = [];
 let currentUser = null;
+// 'microsoft' or 'pin' — which path currentUser actually logged in through.
+// Firestore Rules now require a real Microsoft-verified identity to manage
+// users or change your own password (see firestore.rules), so the UI needs
+// to know which kind of session this is, not just who's logged in.
+let currentAuthMethod = null;
 let notifications = []; // the logged-in user's inbox, newest first
+
+function isMicrosoftAuthed() {
+  return currentAuthMethod === 'microsoft';
+}
 
 function populateUserSelect() {
   const select = document.getElementById('login-user-select');
@@ -1506,7 +1515,11 @@ function attemptLogin() {
     return;
   }
   currentUser = user;
-  try { localStorage.setItem('apc_current_user_id', user.id); } catch (e) {}
+  currentAuthMethod = 'pin';
+  try {
+    localStorage.setItem('apc_current_user_id', user.id);
+    localStorage.setItem('apc_current_auth_method', 'pin');
+  } catch (e) {}
   enterApp();
 }
 
@@ -1532,7 +1545,11 @@ async function attemptMicrosoftLogin() {
       return;
     }
     currentUser = user;
-    try { localStorage.setItem('apc_current_user_id', user.id); } catch (e) {}
+    currentAuthMethod = 'microsoft';
+    try {
+      localStorage.setItem('apc_current_user_id', user.id);
+      localStorage.setItem('apc_current_auth_method', 'microsoft');
+    } catch (e) {}
     enterApp();
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Sign in with Microsoft'; }
@@ -1550,7 +1567,11 @@ function enterApp() {
 
 function logout() {
   currentUser = null;
-  try { localStorage.removeItem('apc_current_user_id'); } catch (e) {}
+  currentAuthMethod = null;
+  try {
+    localStorage.removeItem('apc_current_user_id');
+    localStorage.removeItem('apc_current_auth_method');
+  } catch (e) {}
   // End the real Firebase Auth session too (not just the app's own notion of
   // "who's logged in") — otherwise a Microsoft-authenticated session would
   // just get silently restored again on the next page load.
@@ -1655,10 +1676,15 @@ document.addEventListener('DOMContentLoaded', async function initGate() {
   }
 
   let savedUserId = null;
-  try { savedUserId = localStorage.getItem('apc_current_user_id'); } catch (e) {}
+  let savedAuthMethod = null;
+  try {
+    savedUserId = localStorage.getItem('apc_current_user_id');
+    savedAuthMethod = localStorage.getItem('apc_current_auth_method');
+  } catch (e) {}
   const saved = allUsers.find(u => u.id === savedUserId);
   if (saved) {
     currentUser = saved;
+    currentAuthMethod = savedAuthMethod;
     enterApp();
   } else {
     document.getElementById('login-pin-input').focus();
@@ -3115,7 +3141,7 @@ const App = {
   },
 
   async submitPasswordChange() {
-    if (!currentUser) return;
+    if (!currentUser || !isMicrosoftAuthed()) return;
     const newInput = document.getElementById('new-password-input');
     const confirmInput = document.getElementById('confirm-password-input');
     const errorEl = document.getElementById('change-password-error');
@@ -3747,13 +3773,13 @@ const App = {
   // Manage Users is only reachable via goManageUsers, which already checks
   // this, but these are re-checked here too since they mutate shared data.
   updateUserField(userId, field, value) {
-    if (!isAdminUser(currentUser)) return;
+    if (!isAdminUser(currentUser) || !isMicrosoftAuthed()) return;
     const u = allUsers.find(x => x.id === userId);
     if (u) u[field] = value;
   },
 
   async saveUserField(userId) {
-    if (!isAdminUser(currentUser)) return;
+    if (!isAdminUser(currentUser) || !isMicrosoftAuthed()) return;
     const u = allUsers.find(x => x.id === userId);
     if (!u || !window.__firebaseSaveUser) return;
     await window.__firebaseSaveUser(u);
@@ -3763,7 +3789,7 @@ const App = {
   // Existing PINs are never shown to admins editing other users — this only
   // ever writes a NEW value, and does nothing if left blank.
   async resetUserPin(userId, newPin) {
-    if (!isAdminUser(currentUser)) return;
+    if (!isAdminUser(currentUser) || !isMicrosoftAuthed()) return;
     const val = (newPin || '').trim();
     if (!val) return;
     const u = allUsers.find(x => x.id === userId);
@@ -3774,7 +3800,7 @@ const App = {
   },
 
   async addUser() {
-    if (!isAdminUser(currentUser)) return;
+    if (!isAdminUser(currentUser) || !isMicrosoftAuthed()) return;
     const nameInput = document.getElementById('new-user-name');
     const emailInput = document.getElementById('new-user-email');
     const pinInput = document.getElementById('new-user-pin');
@@ -3801,7 +3827,7 @@ const App = {
   },
 
   async removeUser(userId) {
-    if (!isAdminUser(currentUser)) return;
+    if (!isAdminUser(currentUser) || !isMicrosoftAuthed()) return;
     const u = allUsers.find(x => x.id === userId);
     if (!u) return;
     if (u.id === currentUser.id) {
@@ -4917,6 +4943,9 @@ function renderUsers() {
   if (!isAdminUser(currentUser)) {
     return `<div class="empty-state">You don't have access to this page.<div class="back-link" onclick="App.goList()">&larr; Back</div></div>`;
   }
+  if (!isMicrosoftAuthed()) {
+    return `<div class="empty-state">Managing users now requires signing in with Microsoft (Firestore Rules no longer allow the PIN-fallback path to write to this collection).<br>Log out and use "Sign in with Microsoft" to manage accounts.<div class="back-link" onclick="App.goList()">&larr; Back</div></div>`;
+  }
 
   const rows = allUsers.map(u => {
     const roleCell = u.approverSlot
@@ -4965,6 +4994,9 @@ function renderUsers() {
 
 function renderChangePassword() {
   if (!currentUser) return `<div class="empty-state">Not logged in.</div>`;
+  if (!isMicrosoftAuthed()) {
+    return `<div class="empty-state">Changing your PIN now requires signing in with Microsoft (Firestore Rules no longer allow the PIN-fallback path to write to this collection).<br>Log out and use "Sign in with Microsoft" to change it.<div class="back-link" onclick="App.goList()">&larr; Back</div></div>`;
+  }
   return `
   <div class="back-link" onclick="App.goList()">&larr; Back to all deals</div>
   <div class="panel" style="max-width:360px;">

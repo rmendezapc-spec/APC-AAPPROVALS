@@ -16,11 +16,17 @@ rules_version = '2';
 // In other words: this is still a real barrier against a bare curl/API call
 // with just the (public, unavoidably visible) project config, but NOT yet a
 // barrier that tells apart "signed in with a verified company identity" from
-// "clicked through the anonymous fallback." Tightening any match block below
-// to `if request.auth != null && request.auth.token.firebase.sign_in_provider
-// != 'anonymous'` would close that gap — but only do that once the PIN
-// fallback is retired (see CLAUDE.md/PR history), since it would otherwise
-// lock out anyone still using it.
+// "clicked through the anonymous fallback." Tightening every match block
+// below the same way would close that gap fully — but only do that once the
+// PIN fallback is retired, since it would otherwise lock out anyone still
+// using it for everyday app usage (viewing/editing deals, the Sales Report).
+//
+// ROUND 1 (this pass) tightens just the `users` collection ahead of that —
+// see its own match block below for why: it's the one place a client-side-
+// only check was a real privilege-escalation hole (anyone could otherwise
+// grant themselves 'admin' with a raw Firestore write), and unlike everyday
+// deal/report usage, managing user accounts is reasonable to require a real
+// identity for even before the PIN fallback is fully retired elsewhere.
 //
 // Requires BOTH the "Anonymous" AND "Microsoft" sign-in providers enabled in
 // Firebase Console -> Build -> Authentication -> Sign-in method. The
@@ -31,6 +37,48 @@ rules_version = '2';
 // and the app falls back to showing its usual storage-error banner.
 service cloud.firestore {
   match /databases/{database}/documents {
+    // ROUND 1 of tightening (see the note above): the `users` collection is
+    // the one place a client-side-only check was a real privilege-escalation
+    // hole — the app's role gating (isAdminUser/canAddDeals) only controls
+    // what buttons render, so anyone with dev tools open could otherwise
+    // call the same Firestore write directly and grant themselves 'admin'.
+    // These two helpers require a REAL Microsoft-verified identity (an
+    // anonymous PIN-fallback session has no email claim and always fails
+    // both) — deliberately narrower than the `request.auth != null` used
+    // everywhere else in this file for now. Emails are hardcoded here rather
+    // than looked up from the `users` collection itself, since Firestore
+    // Rules can only `get()` a known document path and these `users` docs
+    // are keyed by an app-generated id (e.g. 'usr_richard'), not by Firebase
+    // Auth uid or email — there's no query path from "the caller's verified
+    // email" to "their own doc" otherwise. Keep this list in sync with
+    // Manage Users' admin/approver accounts by hand (no deploy pipeline —
+    // see BUILDHANDOFF.md §7 — so this always needs a manual re-paste here
+    // when the admin/approver roster changes).
+    function isAdminOrApproverEmail() {
+      return request.auth != null
+        && request.auth.token.firebase.sign_in_provider == 'microsoft.com'
+        && request.auth.token.email.lower() in [
+          'richard@americanprecast.com',
+          'navid@americanprecast.com',
+          'sandy@americanprecast.com',
+          'connor@americanprecast.com'
+        ];
+    }
+    // Self-service "Change Password": lets a signed-in Microsoft user update
+    // ONLY the `pin` field of their own account doc (matched by their
+    // verified email against the doc's stored `email`, since again there's
+    // no uid-keyed lookup available). `affectedKeys().hasOnly(['pin'])`
+    // blocks using this same path to sneak in a `role` or `email` change on
+    // your own account.
+    function isSelfPinChange() {
+      return request.auth != null
+        && request.auth.token.firebase.sign_in_provider == 'microsoft.com'
+        && resource != null
+        && resource.data.email is string
+        && request.auth.token.email.lower() == resource.data.email.lower()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['pin']);
+    }
+
     // Legacy single-document store (superseded by the `deals` collection
     // below), kept only so the one-time migration read still works.
     match /apcDealBoard/{document=**} {
@@ -42,8 +90,17 @@ service cloud.firestore {
     }
     // Login accounts (name, email, PIN, role, approver slot). The `email`
     // field is what Microsoft sign-in matches a signed-in account against.
-    match /users/{document=**} {
-      allow read, write: if request.auth != null;
+    // Reads stay open (the login gate needs the whole roster before it can
+    // know who's an admin) — see the residual plaintext-PIN-read gap noted
+    // in BUILDHANDOFF.md §6. Writes now require a real Microsoft-verified
+    // admin/approver, or a self-service PIN-only change on your own account
+    // — this means the PIN-fallback path can no longer manage users or
+    // change its own password; the client hides those UI paths accordingly
+    // when not signed in via Microsoft (see index.html's isMicrosoftAuthed).
+    match /users/{document} {
+      allow read: if request.auth != null;
+      allow create, delete: if isAdminOrApproverEmail();
+      allow update: if isAdminOrApproverEmail() || isSelfPinChange();
     }
     // Reusable proposal boilerplate (scope of work, terms, exclusions, etc.)
     match /templates/{document=**} {
