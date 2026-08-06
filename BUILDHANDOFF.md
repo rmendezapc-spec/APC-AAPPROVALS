@@ -1,6 +1,6 @@
 # APC Deal Approval Board — Build Handoff
 
-<!-- no-op touch commit: GitHub Pages deployment for the previous two merges got stuck queued/cancelled on GitHub's side; this commit exists solely to give the Pages pipeline a fresh commit to deploy. -->
+<!-- no-op touch commit #2: retrying now that GitHub's Actions/Pages incident (Aug 6, 2026) has largely been mitigated per githubstatus.com. -->
 
 **For:** Claude Code (continuing this build)
 **From:** Prior session with Claude (chat interface)
