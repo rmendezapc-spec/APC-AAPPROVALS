@@ -1,5 +1,7 @@
 # APC Deal Approval Board — Build Handoff
 
+<!-- no-op touch commit: GitHub Pages deployment for the previous two merges got stuck queued/cancelled on GitHub's side; this commit exists solely to give the Pages pipeline a fresh commit to deploy. -->
+
 **For:** Claude Code (continuing this build)
 **From:** Prior session with Claude (chat interface)
 **Repo:** `rmendezapc-spec/APC-AAPPROVALS` (public, GitHub Pages)
