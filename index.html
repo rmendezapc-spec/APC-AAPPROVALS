@@ -1539,7 +1539,24 @@ async function attemptMicrosoftLogin() {
       return;
     }
     const email = result.email.trim().toLowerCase();
-    const user = allUsers.find(u => (u.email || '').trim().toLowerCase() === email);
+    let user = allUsers.find(u => (u.email || '').trim().toLowerCase() === email);
+    // The automatic account seed/email-backfill runs anonymously at page
+    // load, before any Microsoft session exists — so the very first time
+    // an admin/approver's email gets backfilled (or a brand-new seeded
+    // account like Navid/Christina/Russell gets created) under the
+    // tightened `users` Firestore Rules, that anonymous attempt is denied
+    // and silently no-ops. Now that we hold a real Microsoft-verified
+    // session, retry the seed — it'll succeed if this account is one of
+    // the hardcoded admin/approver emails — then wait briefly for the
+    // live `users` subscription to pick up the change before giving up.
+    if (!user && window.__firebaseSeedUsers) {
+      errorEl.textContent = 'Verifying your account…';
+      try { await window.__firebaseSeedUsers(); } catch (e) {}
+      for (let i = 0; i < 10 && !user; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        user = allUsers.find(u => (u.email || '').trim().toLowerCase() === email);
+      }
+    }
     if (!user) {
       errorEl.textContent = `Signed in as ${result.email}, but no account here is set up for that address yet — ask an admin to add it under Manage Users.`;
       return;
