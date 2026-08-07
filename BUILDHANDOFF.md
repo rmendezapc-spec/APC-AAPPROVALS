@@ -97,6 +97,7 @@ Everything else in this document is solid and tested; this is the priority.
 | Wide desktop layout (uses up to ~1500px, was capped at 1080px) | ✅ Done |
 | **Shared real-time data across team (Firebase Firestore)** | ⚠️ **Wired in, but unverified — see §2** |
 | Permanent Firestore security rules (replacing test mode) | ❌ Not started — test mode expires 30 days after project creation |
+| Export Backup / Import Backup (JSON download + admin re-upload, both apps) | ✅ Done — see §6 |
 | Private GitHub repo | ❌ Not started — repo is currently Public; team was checking for a paid GitHub plan (Team/Enterprise) that supports private + Pages; no confirmation yet |
 
 ---
@@ -293,6 +294,19 @@ accounts are created without one.
 3. Stale `pin` field values remain in Firestore on accounts created before
    this round — harmless (nothing reads them), but worth a one-time cleanup
    if that data hygiene ever matters.
+
+**Update — Export Backup / Import Backup added (both apps).** Every admin
+now has a "Settings → Export Backup" button that downloads a timestamped
+JSON snapshot of that app's live Firestore-synced data (deals, users,
+templates, cost codes, deal templates, and material pricing for
+`index.html`; uploaded months, collections, and overrides for
+`sales-report.html`). "Import Backup" (admin/approver only, hidden from
+everyone else) re-uploads that file: it confirms the record counts and
+export date with the user, then upserts each record by id/key — nothing
+outside the file is deleted, and anything sharing an id/key with an
+existing record is overwritten. This exists purely as a manual safety net
+("re-upload it in case a failure occurs"), not an automated backup
+schedule — someone has to remember to click Export periodically.
 
 ---
 
