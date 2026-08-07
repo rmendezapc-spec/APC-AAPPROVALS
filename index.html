@@ -840,6 +840,9 @@
         <button class="settings-menu-item" id="manage-templates-btn" onclick="closeSettingsMenu(); App.goManageTemplates();" style="display:none;">Proposal Templates</button>
         <button class="settings-menu-item" id="manage-cost-codes-btn" onclick="closeSettingsMenu(); App.goManageCostCodes();" style="display:none;">Cost Code Library</button>
         <button class="settings-menu-item" id="manage-deal-templates-btn" onclick="closeSettingsMenu(); App.goManageDealTemplates();" style="display:none;">Deal Templates</button>
+        <button class="settings-menu-item" onclick="closeSettingsMenu(); App.exportBackup();">Export Backup</button>
+        <button class="settings-menu-item" id="import-backup-btn" onclick="closeSettingsMenu(); App.triggerImportBackup();" style="display:none;">Import Backup</button>
+        <input type="file" id="import-backup-input" accept=".json" style="display:none;" onchange="if (this.files[0]) App.handleImportFile(this.files[0]); this.value='';">
         <button class="settings-menu-item" id="theme-toggle-btn" onclick="toggleTheme()">🌙 Dark Mode</button>
         <button class="settings-menu-item" onclick="closeSettingsMenu(); logout();">Log Out</button>
       </div>
@@ -1434,6 +1437,8 @@ function updateUserChrome() {
   if (costCodesBtn) costCodesBtn.style.display = currentUser ? '' : 'none';
   const dealTemplatesBtn = document.getElementById('manage-deal-templates-btn');
   if (dealTemplatesBtn) dealTemplatesBtn.style.display = currentUser ? '' : 'none';
+  const importBackupBtn = document.getElementById('import-backup-btn');
+  if (importBackupBtn) importBackupBtn.style.display = isAdminUser(currentUser) ? '' : 'none';
 }
 
 let gateLoadError = '';
@@ -3738,6 +3743,85 @@ const App = {
       : ('Remove ' + u.name + '? They will no longer be able to log in.');
     if (!confirm(warning)) return;
     if (window.__firebaseDeleteUser) await window.__firebaseDeleteUser(userId);
+    render();
+  },
+
+  // A point-in-time JSON snapshot of everything this app keeps in Firestore
+  // (except per-user notifications, which are ephemeral inbox state, not
+  // data worth restoring) — a safety net to re-upload from if something goes
+  // wrong. Available to anyone logged in, since it's read-only.
+  exportBackup() {
+    if (!currentUser) return;
+    const backup = {
+      app: 'deal-approval-board',
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      deals,
+      users: allUsers,
+      templates: allTemplates,
+      costCodes,
+      dealTemplates,
+      materialPricing: currentMaterialPricingMap(),
+    };
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+    downloadBlob(blob, `deal-board-backup-${backup.exportedAt.slice(0, 10)}.json`);
+  },
+
+  triggerImportBackup() {
+    if (!isAdminUser(currentUser)) return;
+    const input = document.getElementById('import-backup-input');
+    if (input) input.click();
+  },
+
+  // Restores a previously-exported backup by upserting each record back into
+  // Firestore by its own id — this never deletes anything not present in the
+  // file, it only overwrites records that share an id with one in the
+  // backup. That's the right shape for "recover from a failure," not a full
+  // replace, so newer data created after the backup was taken isn't wiped.
+  async handleImportFile(file) {
+    if (!isAdminUser(currentUser)) return;
+    let backup;
+    try {
+      backup = JSON.parse(await file.text());
+    } catch (e) {
+      alert("Could not read that file — make sure it's a JSON backup exported from this app.");
+      return;
+    }
+    if (!backup || typeof backup !== 'object' || backup.app !== 'deal-approval-board') {
+      alert("This doesn't look like a Deal Approval Board backup file.");
+      return;
+    }
+    const counts = {
+      deals: Array.isArray(backup.deals) ? backup.deals.length : 0,
+      users: Array.isArray(backup.users) ? backup.users.length : 0,
+      templates: Array.isArray(backup.templates) ? backup.templates.length : 0,
+      costCodes: Array.isArray(backup.costCodes) ? backup.costCodes.length : 0,
+      dealTemplates: Array.isArray(backup.dealTemplates) ? backup.dealTemplates.length : 0,
+      'material pricing': backup.materialPricing ? 1 : 0,
+    };
+    const summary = Object.entries(counts).filter(([, n]) => n > 0).map(([k, n]) => `${n} ${k}`).join(', ');
+    if (!summary) { alert('That backup file has nothing in it to restore.'); return; }
+    const when = backup.exportedAt ? new Date(backup.exportedAt).toLocaleString('en-US') : 'an unknown date';
+    if (!confirm(`Restore from the backup taken ${when}?\n\n${summary}\n\nThis overwrites any existing record that shares an id with one in the file. Nothing outside the backup is deleted.`)) return;
+
+    let written = 0, failed = 0;
+    const saveEach = async (items, saveFn) => {
+      if (!Array.isArray(items) || !saveFn) return;
+      for (const item of items) {
+        const res = await saveFn(item);
+        if (res && res.ok) written++; else failed++;
+      }
+    };
+    await saveEach(backup.deals, window.__firebaseSaveDeal);
+    await saveEach(backup.users, window.__firebaseSaveUser);
+    await saveEach(backup.templates, window.__firebaseSaveTemplate);
+    await saveEach(backup.costCodes, window.__firebaseSaveCostCode);
+    await saveEach(backup.dealTemplates, window.__firebaseSaveDealTemplate);
+    if (backup.materialPricing && window.__firebaseSaveMaterialPricing) {
+      const res = await window.__firebaseSaveMaterialPricing(backup.materialPricing);
+      if (res && res.ok) written++; else failed++;
+    }
+    alert(`Backup restored: ${written} record(s) written` + (failed ? `, ${failed} failed — check your connection and try again.` : '.'));
     render();
   },
 
