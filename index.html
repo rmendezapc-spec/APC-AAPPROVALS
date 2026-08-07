@@ -1996,6 +1996,11 @@ function blankDeal() {
     approvals: { connor: null, sandy: null },
     rejectReasons: { connor: '', sandy: '' },
     comments: [],
+    archived: false,
+    archivedAt: null,
+    archivedBy: '',
+    trashedAt: null,
+    trashedBy: '',
     createdAt: Date.now()
   };
 }
@@ -2259,6 +2264,16 @@ function dealStatus(deal) {
   if (deal.approvals.connor === false || deal.approvals.sandy === false) return 'rejected';
   if (deal.approvals.connor === true && deal.approvals.sandy === true) return 'approved';
   return 'pending';
+}
+
+// A deal's lifecycle (active/archived/deleted) is separate from its
+// approval status — an approved deal can still be archived once the job's
+// done, and a deal can be soft-deleted (recoverable) without ever having
+// gone through approval at all.
+function dealLifecycle(deal) {
+  if (deal.trashedAt) return 'deleted';
+  if (deal.archived) return 'archived';
+  return 'active';
 }
 
 // Gate between a rep's Submit for Approval and Sandy/Connor's review queue,
@@ -3103,6 +3118,60 @@ const App = {
 
   setDetailTab(tab) {
     detailTab = tab;
+    render();
+  },
+
+  // Archive/Delete are restricted to admins/approvers, same gate as Manage
+  // Users — reps can submit and edit their own deals but shouldn't be able
+  // to make them disappear from the pipeline. Both record who acted and
+  // when, and both are reversible (Unarchive / Restore) rather than a
+  // one-way trip — "deleted" here means moved out of the active pipeline
+  // into a recoverable list, not actually erased.
+  async archiveDeal(dealId) {
+    if (!isAdminUser(currentUser)) return;
+    const d = deals.find(x => x.id === dealId);
+    if (!d) return;
+    if (!confirm('Archive this deal? It will move out of the active pipeline into the Archived list.')) return;
+    d.archived = true;
+    d.archivedAt = Date.now();
+    d.archivedBy = currentUser.name;
+    await saveDeal(d);
+    currentView = 'list';
+    currentFilter = 'archived';
+    render();
+  },
+
+  async unarchiveDeal(dealId) {
+    if (!isAdminUser(currentUser)) return;
+    const d = deals.find(x => x.id === dealId);
+    if (!d) return;
+    d.archived = false;
+    d.archivedAt = null;
+    d.archivedBy = '';
+    await saveDeal(d);
+    render();
+  },
+
+  async trashDeal(dealId) {
+    if (!isAdminUser(currentUser)) return;
+    const d = deals.find(x => x.id === dealId);
+    if (!d) return;
+    if (!confirm('Delete this deal? It moves to the Deleted list and can be restored later — nothing is erased.')) return;
+    d.trashedAt = Date.now();
+    d.trashedBy = currentUser.name;
+    await saveDeal(d);
+    currentView = 'list';
+    currentFilter = 'deleted';
+    render();
+  },
+
+  async restoreDeal(dealId) {
+    if (!isAdminUser(currentUser)) return;
+    const d = deals.find(x => x.id === dealId);
+    if (!d) return;
+    d.trashedAt = null;
+    d.trashedBy = '';
+    await saveDeal(d);
     render();
   },
 
@@ -4051,33 +4120,56 @@ function render() {
 }
 
 function renderList() {
-  let filtered = deals;
-  if (currentFilter !== 'all') filtered = deals.filter(d => dealStatus(d) === currentFilter);
+  const activeDeals = deals.filter(d => dealLifecycle(d) === 'active');
+  const archivedDeals = deals.filter(d => dealLifecycle(d) === 'archived');
+  const deletedDeals = deals.filter(d => dealLifecycle(d) === 'deleted');
+  const lifecycleFilters = ['archived', 'deleted'];
+
+  let filtered = activeDeals;
+  if (currentFilter === 'archived') filtered = archivedDeals;
+  else if (currentFilter === 'deleted') filtered = deletedDeals;
+  else if (currentFilter !== 'all') filtered = activeDeals.filter(d => dealStatus(d) === currentFilter);
 
   const counts = {
-    all: deals.length,
-    pending: deals.filter(d => dealStatus(d) === 'pending').length,
-    approved: deals.filter(d => dealStatus(d) === 'approved').length,
-    rejected: deals.filter(d => dealStatus(d) === 'rejected').length
+    all: activeDeals.length,
+    pending: activeDeals.filter(d => dealStatus(d) === 'pending').length,
+    approved: activeDeals.filter(d => dealStatus(d) === 'approved').length,
+    rejected: activeDeals.filter(d => dealStatus(d) === 'rejected').length,
+    archived: archivedDeals.length,
+    deleted: deletedDeals.length
   };
 
-  const tabs = ['all','pending','approved','rejected'].map(f =>
+  const standardTabs = ['all', 'pending', 'approved', 'rejected'].map(f =>
     `<div class="tab ${currentFilter===f?'active':''}" onclick="App.setFilter('${f}')">${f.charAt(0).toUpperCase()+f.slice(1)} (${counts[f]})</div>`
   ).join('');
+  // Archive/Deleted are visibility-restricted to admins/approvers — reps
+  // never see these tabs at all, not even to know they exist.
+  const lifecycleTabs = isAdminUser(currentUser) ? lifecycleFilters.map(f =>
+    `<div class="tab ${currentFilter===f?'active':''}" onclick="App.setFilter('${f}')">${f.charAt(0).toUpperCase()+f.slice(1)} (${counts[f]})</div>`
+  ).join('') : '';
+  const tabs = standardTabs + lifecycleTabs;
+
+  const isLifecycleView = lifecycleFilters.includes(currentFilter);
 
   let body;
   if (filtered.length === 0) {
     body = `<div class="empty-state">
-      <div class="big">No deals here yet</div>
-      <div>New submissions will show up in this list.</div>
+      <div class="big">${isLifecycleView ? 'Nothing here' : 'No deals here yet'}</div>
+      <div>${currentFilter === 'archived' ? 'Archived deals will show up here.' : currentFilter === 'deleted' ? 'Deleted deals will show up here.' : 'New submissions will show up in this list.'}</div>
     </div>`;
   } else {
     body = filtered.map(d => {
       const status = dealStatus(d);
+      const lifecycleNote = currentFilter === 'archived'
+        ? `<div class="meta">Archived by ${esc(d.archivedBy || 'unknown')}${d.archivedAt ? ' on ' + new Date(d.archivedAt).toLocaleDateString() : ''}</div>`
+        : currentFilter === 'deleted'
+        ? `<div class="meta">Deleted by ${esc(d.trashedBy || 'unknown')}${d.trashedAt ? ' on ' + new Date(d.trashedAt).toLocaleDateString() : ''}</div>`
+        : '';
       return `<div class="deal-card" onclick="App.viewDeal('${d.id}')">
         <div class="info">
           <div class="job">${esc(d.customerName || 'Untitled deal')}</div>
           <div class="meta">${esc(fullAddressLine(d) || 'No address')} &middot; Rep: ${esc(d.repName || '—')} &middot; ${esc(d.date || '')}</div>
+          ${lifecycleNote}
         </div>
         <div class="right">
           <div class="price">${money(dealClientPrice(d))}<span class="label">Client Price</span></div>
@@ -4525,8 +4617,25 @@ function renderDetail() {
     : detailTab === 'intake' ? renderIntakeTab(d)
     : overviewHtml;
 
+  const lifecycle = dealLifecycle(d);
+  const lifecycleBanner = lifecycle === 'archived'
+    ? `<div class="banner">Archived by ${esc(d.archivedBy || 'unknown')}${d.archivedAt ? ' on ' + new Date(d.archivedAt).toLocaleDateString() : ''}.</div>`
+    : lifecycle === 'deleted'
+    ? `<div class="banner">Deleted by ${esc(d.trashedBy || 'unknown')}${d.trashedAt ? ' on ' + new Date(d.trashedAt).toLocaleDateString() : ''}. It's still recoverable — nothing has been erased.</div>`
+    : '';
+
+  const lifecycleButtons = isAdminUser(currentUser) ? (
+    lifecycle === 'deleted'
+      ? `<button class="btn btn-outline btn-small" onclick="App.restoreDeal('${d.id}')">Restore</button>`
+      : lifecycle === 'archived'
+      ? `<button class="btn btn-outline btn-small" onclick="App.unarchiveDeal('${d.id}')">Unarchive</button><button class="btn btn-danger btn-small" onclick="App.trashDeal('${d.id}')">Delete</button>`
+      : `<button class="btn btn-outline btn-small" onclick="App.archiveDeal('${d.id}')">Archive</button><button class="btn btn-danger btn-small" onclick="App.trashDeal('${d.id}')">Delete</button>`
+  ) : '';
+
   return `
   <div class="back-link" onclick="App.goList()">&larr; Back to all deals</div>
+
+  ${lifecycleBanner}
 
   <div class="panel" style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:14px;">
     <div>
@@ -4534,7 +4643,7 @@ function renderDetail() {
       <div style="color:var(--muted); font-size:13.5px;">${esc(fullAddressLine(d))} &middot; Rep: ${esc(d.repName)} &middot; ${esc(d.date)}</div>
       ${d.email ? `<div style="color:var(--muted); font-size:13.5px; margin-top:2px;">${esc(d.email)}</div>` : ''}
     </div>
-    <div style="display:flex; align-items:center; gap:12px;">
+    <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
       <div class="stamp ${status}">${status}</div>
       <button class="btn btn-outline btn-small" onclick="App.goProposal('${d.id}')">Generate Proposal</button>
       <button class="btn btn-outline btn-small" onclick="App.setDetailTab('handoff')">Handoff Sheet</button>
@@ -4542,6 +4651,7 @@ function renderDetail() {
       <button class="btn btn-outline btn-small" onclick="App.setDetailTab('intake')">Intake Sheet</button>
       <button class="btn btn-outline btn-small" onclick="App.goMaterialCalculator('${d.id}')">Material Calculator</button>
       ${status === 'rejected' ? `<button class="btn btn-outline btn-small" onclick="App.editDeal('${d.id}')">Edit</button>` : ''}
+      ${lifecycleButtons}
     </div>
   </div>
 
