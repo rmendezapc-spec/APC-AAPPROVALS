@@ -74,6 +74,13 @@ service cloud.firestore {
     match /deals/{document=**} {
       allow read, write: if isRealUser();
     }
+    // Attachment file data (base64), one document per attachment — split out
+    // of `deals` because embedding several photos inline routinely exceeded
+    // Firestore's 1MB-per-document cap once 3+ jobsite photos became a
+    // mandatory part of the CFI SOP submission checklist.
+    match /dealAttachments/{document=**} {
+      allow read, write: if isRealUser();
+    }
     // Login accounts (name, email, role, approver slot). The `email` field is
     // what Microsoft sign-in matches a signed-in account against. Reads stay
     // open to any session, anonymous included (the login gate needs the

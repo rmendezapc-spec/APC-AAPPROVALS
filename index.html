@@ -973,6 +973,9 @@
   const notificationsCollRef = collection(db, 'notifications');
   const costCodesCollRef = collection(db, 'costCodes');
   const dealTemplatesCollRef = collection(db, 'dealTemplates');
+  // Attachment file data (base64 dataUrls), split out of the `deals`
+  // collection — see window.__firebaseSaveAttachment below for why.
+  const dealAttachmentsCollRef = collection(db, 'dealAttachments');
 
   // Each deal is its own document, keyed by the deal's own id. This avoids the
   // 1MB single-document cap and the "last write wins, whole list" concurrency
@@ -997,6 +1000,44 @@
       onData(arr);
     }, (err) => {
       console.error('Firestore listen error:', err);
+      if (onError) onError(err);
+    });
+  };
+
+  // Attachment blobs (photos, contracts, etc.) each get their own document —
+  // a deal doc embedding several compressed photos inline routinely blew
+  // past Firestore's 1MB-per-document cap once the CFI SOP checklist made 3+
+  // jobsite photos mandatory (see BUILDHANDOFF.md #2, which flagged inline
+  // base64 attachments as a scaling risk from the start). A single photo
+  // comfortably fits on its own; deals never carry attachment file data
+  // directly anymore — see stripAttachmentBlobs/persistAttachmentBlobs below.
+  window.__firebaseSaveAttachment = async function (att) {
+    try {
+      await setDoc(doc(dealAttachmentsCollRef, att.id), att);
+      return { ok: true };
+    } catch (e) {
+      console.error('Firestore save attachment failed:', e);
+      return { ok: false, error: (e && e.message) || String(e) };
+    }
+  };
+
+  window.__firebaseDeleteAttachment = async function (attId) {
+    try {
+      await deleteDoc(doc(dealAttachmentsCollRef, attId));
+      return { ok: true };
+    } catch (e) {
+      console.error('Firestore delete attachment failed:', e);
+      return { ok: false, error: (e && e.message) || String(e) };
+    }
+  };
+
+  window.__firebaseSubscribeAttachments = function (onData, onError) {
+    onSnapshot(dealAttachmentsCollRef, (snap) => {
+      const arr = [];
+      snap.forEach((d) => arr.push(d.data()));
+      onData(arr);
+    }, (err) => {
+      console.error('Firestore attachment listen error:', err);
       if (onError) onError(err);
     });
   };
@@ -1734,6 +1775,8 @@ let submissionChecklistErrors = null;
 let materialCalcState = { productKey: MATERIAL_CALC_PRODUCTS[0].key, styleKey: MATERIAL_CALC_PRODUCTS[0].styles[0].key, linearFeet: '', postTypeRows: [], assignedTo: '' };
 let draftAutosaveTimer = null;
 let draftMode = null; // 'new' | 'edit' — which flow created the current draftDeal
+// Attachment file data, keyed by attachment id — see stripAttachmentBlobs.
+let attachmentBlobs = {};
 let editingMaterialPricing = false;
 let materialPricingDraft = null;
 
@@ -1829,10 +1872,43 @@ function stopDraftAutosave() {
   if (draftAutosaveTimer) { clearInterval(draftAutosaveTimer); draftAutosaveTimer = null; }
 }
 
+// Any attachment still carrying its file data in-memory (i.e. added this
+// session, not yet round-tripped through Firestore — see stripAttachmentBlobs)
+// gets its own `dealAttachments` document. Attachments loaded from Firestore
+// never have `dataUrl` locally (it was stripped before saving), so this
+// naturally only re-uploads attachments that are actually new or changed,
+// not every attachment on every unrelated save.
+async function persistAttachmentBlobs(deal) {
+  if (!window.__firebaseSaveAttachment) return;
+  for (const a of (deal.attachments || [])) {
+    if (!a.dataUrl) continue;
+    const result = await window.__firebaseSaveAttachment({ id: a.id, dealId: deal.id, dataUrl: a.dataUrl, addedAt: a.addedAt || Date.now() });
+    if (!result.ok) throw new Error(result.error || 'Could not save an attachment.');
+  }
+}
+
+// Strips file data out of a deal's attachments before it's written as the
+// deal document itself — each attachment's `dataUrl` lives in its own
+// `dealAttachments` document instead (see persistAttachmentBlobs above),
+// since embedding several photos inline can push a single deal well past
+// Firestore's 1MB-per-document cap. Returns a new object; never mutates the
+// original so the in-memory copy keeps rendering its attachments instantly.
+function stripAttachmentBlobs(deal) {
+  if (!deal.attachments || !deal.attachments.some(a => a.dataUrl)) return deal;
+  return { ...deal, attachments: deal.attachments.map(a => {
+    if (!a.dataUrl) return a;
+    const stripped = { ...a };
+    delete stripped.dataUrl;
+    return stripped;
+  }) };
+}
+
 async function saveDeal(deal) {
   try {
+    await persistAttachmentBlobs(deal);
+    const dealForFirestore = stripAttachmentBlobs(deal);
     const result = window.__firebaseSaveDeal
-      ? await window.__firebaseSaveDeal(deal)
+      ? await window.__firebaseSaveDeal(dealForFirestore)
       : { ok: false, error: 'Firebase failed to load in this browser.' };
     storageError = !result.ok;
     storageErrorDetail = result.ok ? '' : (result.error || '');
@@ -1841,6 +1917,36 @@ async function saveDeal(deal) {
     storageErrorDetail = (e && e.message) || String(e);
   }
   render();
+}
+
+// Removes an attachment's file data from `dealAttachments` too, not just the
+// deal's own lightweight reference to it — otherwise the blob lingers
+// orphaned forever. Fire-and-forget: worst case on failure is a harmless
+// leftover document, not a user-visible break.
+function deleteAttachmentBlob(attId) {
+  if (window.__firebaseDeleteAttachment) {
+    window.__firebaseDeleteAttachment(attId).catch(e => console.error('Could not delete attachment blob:', e));
+  }
+}
+
+// Live map of attachment id -> dataUrl, hydrated from `dealAttachments` and
+// consulted at render time (see renderAttachmentCard) for any attachment
+// that doesn't already carry its file data in memory. Subscribing to the
+// whole collection (rather than per-deal) matches how every other
+// collection in this app already works, and keeps this simple — attachment
+// volume for this team is nowhere near where that would matter.
+function subscribeToAttachmentsOnce() {
+  return new Promise((resolve) => {
+    if (!window.__firebaseSubscribeAttachments) { resolve(); return; }
+    let settled = false;
+    window.__firebaseSubscribeAttachments((list) => {
+      const next = {};
+      list.forEach(a => { next[a.id] = a.dataUrl; });
+      attachmentBlobs = next;
+      if (currentView === 'list' || currentView === 'detail' || currentView === 'form') render();
+      if (!settled) { settled = true; resolve(); }
+    }, () => { if (!settled) { settled = true; resolve(); } });
+  });
 }
 
 // Subscribes once to the shared Firestore `deals` collection. Resolves after
@@ -2507,12 +2613,18 @@ function processAttachmentFile(file) {
 // Shared card markup for both the draft form and the always-open detail
 // view — only the category/delete handlers differ between the two contexts.
 function renderAttachmentCard(a, opts) {
+  // The file data itself may not be on `a` — see stripAttachmentBlobs; once
+  // an attachment has round-tripped through Firestore it lives in
+  // `attachmentBlobs`, hydrated live by subscribeToAttachmentsOnce.
+  const dataUrl = a.dataUrl || attachmentBlobs[a.id] || '';
   const isImage = !a.mimeType || a.mimeType.startsWith('image/');
-  const preview = isImage
-    ? `<div class="attachment-thumb" onclick="openLightbox('${a.dataUrl}')">
-        <img src="${a.dataUrl}" alt="${esc(a.name)}">
+  const preview = !dataUrl
+    ? `<div class="attachment-thumb attachment-file"><div class="file-icon">⏳</div><div class="file-name">Loading…</div></div>`
+    : isImage
+    ? `<div class="attachment-thumb" onclick="openLightbox('${dataUrl}')">
+        <img src="${dataUrl}" alt="${esc(a.name)}">
       </div>`
-    : `<a class="attachment-thumb attachment-file" href="${a.dataUrl}" target="_blank" rel="noopener" download="${esc(a.name)}">
+    : `<a class="attachment-thumb attachment-file" href="${dataUrl}" target="_blank" rel="noopener" download="${esc(a.name)}">
         <div class="file-icon">📄</div>
         <div class="file-name">${esc(a.name)}</div>
       </a>`;
@@ -3457,6 +3569,7 @@ const App = {
   removeAttachment(attId) {
     if (!confirm('Delete this attachment? This cannot be undone.')) return;
     draftDeal.attachments = draftDeal.attachments.filter(a => a.id !== attId);
+    deleteAttachmentBlob(attId);
     render();
   },
 
@@ -3751,6 +3864,7 @@ const App = {
     const d = deals.find(x => x.id === dealId);
     if (!d) return;
     d.attachments = (d.attachments || []).filter(a => a.id !== attId);
+    deleteAttachmentBlob(attId);
     await saveDeal(d);
   },
 
@@ -5629,6 +5743,7 @@ async function initApp() {
     try { await window.__firebaseMigrateLegacy(); } catch (e) { console.error('Migration failed:', e); }
   }
   await subscribeToDealsOnce();
+  await subscribeToAttachmentsOnce();
   if (window.__firebaseSeedTemplates) {
     try { await window.__firebaseSeedTemplates(); } catch (e) { console.error('Template seed failed:', e); }
   }
