@@ -3487,22 +3487,38 @@ const App = {
       return;
     }
     submissionChecklistErrors = null;
-    const existingIdx = deals.findIndex(d => d.id === draftDeal.id);
+    const saved = draftDeal;
+    const existingIdx = deals.findIndex(d => d.id === saved.id);
+    const previousDeal = existingIdx >= 0 ? deals[existingIdx] : null;
     if (existingIdx >= 0) {
       // Editing only ever happens on a rejected deal (see the Edit button in
       // the detail view), so resubmitting always starts a fresh approval round.
-      draftDeal.approvals = { connor: null, sandy: null };
-      draftDeal.rejectReasons = { connor: '', sandy: '' };
-      deals[existingIdx] = draftDeal;
+      saved.approvals = { connor: null, sandy: null };
+      saved.rejectReasons = { connor: '', sandy: '' };
+      deals[existingIdx] = saved;
     } else {
-      deals.unshift(draftDeal);
+      deals.unshift(saved);
     }
-    const saved = draftDeal;
+    currentView = 'list';
+    await saveDeal(saved);
+    if (storageError) {
+      // The write itself failed server-side (network, permissions, etc) even
+      // though the checklist passed — roll back the optimistic list update
+      // and put the rep right back on the form with everything they typed.
+      // Crucially, do NOT clear draftDeal or the local autosave here: this is
+      // exactly the case that safety net exists for.
+      const idx = deals.findIndex(d => d.id === saved.id);
+      if (previousDeal) { if (idx >= 0) deals[idx] = previousDeal; }
+      else if (idx >= 0) { deals.splice(idx, 1); }
+      draftDeal = saved;
+      currentView = 'form';
+      alert('This deal could NOT be saved — ' + (storageErrorDetail || 'an unknown error occurred') + ". Nothing was lost: your entries are still here (and autosaved). Try submitting again, or let an admin know if this keeps happening.");
+      render();
+      return;
+    }
     draftDeal = null;
     stopDraftAutosave();
     clearDraftLocally();
-    currentView = 'list';
-    await saveDeal(saved);
   },
 
   cancelForm() {
