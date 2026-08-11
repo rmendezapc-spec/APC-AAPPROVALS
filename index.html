@@ -1732,6 +1732,8 @@ let storageErrorDetail = '';
 // null once the form is clean or hasn't been submitted yet this session.
 let submissionChecklistErrors = null;
 let materialCalcState = { productKey: MATERIAL_CALC_PRODUCTS[0].key, styleKey: MATERIAL_CALC_PRODUCTS[0].styles[0].key, linearFeet: '', postTypeRows: [], assignedTo: '' };
+let draftAutosaveTimer = null;
+let draftMode = null; // 'new' | 'edit' — which flow created the current draftDeal
 let editingMaterialPricing = false;
 let materialPricingDraft = null;
 
@@ -1779,6 +1781,52 @@ async function recordDocumentGenerated(d, type) {
   d.documents = d.documents || { proposal: null, handoff: null, engineering: null };
   d.documents[type] = { generatedAt: Date.now(), generatedBy: currentUser ? currentUser.name : '' };
   await saveDeal(d);
+}
+
+// Local-only safety net for the in-progress New Deal / Edit Deal form. A
+// draft only ever becomes durable (Firestore) once it clears the CFI SOP
+// checklist and submitDeal() actually calls saveDeal() below — before that
+// it lives solely in the `draftDeal` JS variable, so closing the tab or
+// hitting a failed submit used to lose it outright. One slot per user is
+// enough: nobody works two new-deal forms at once.
+function draftStorageKey() {
+  return 'apc_deal_draft_' + (currentUser ? currentUser.id : 'anon');
+}
+
+function persistDraftLocally() {
+  if (!draftDeal) return;
+  try {
+    localStorage.setItem(draftStorageKey(), JSON.stringify({
+      mode: draftMode, dealId: draftDeal.id, deal: draftDeal, savedAt: Date.now()
+    }));
+  } catch (e) {
+    console.warn('Could not autosave deal draft locally:', e);
+  }
+}
+
+// Returns { mode, dealId, deal, savedAt } for the last autosaved draft, or
+// null. `mode`/`dealId` let goNewDeal/editDeal only offer to restore a draft
+// that actually matches what's being opened.
+function loadDraftLocally() {
+  try {
+    const raw = localStorage.getItem(draftStorageKey());
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function clearDraftLocally() {
+  try { localStorage.removeItem(draftStorageKey()); } catch (e) {}
+}
+
+function startDraftAutosave() {
+  stopDraftAutosave();
+  draftAutosaveTimer = setInterval(persistDraftLocally, 4000);
+}
+
+function stopDraftAutosave() {
+  if (draftAutosaveTimer) { clearInterval(draftAutosaveTimer); draftAutosaveTimer = null; }
 }
 
 async function saveDeal(deal) {
@@ -2938,17 +2986,26 @@ const App = {
   // section/item so editing this deal never mutates the template itself.
   goNewDeal() {
     if (!canAddDeals(currentUser)) return;
-    draftDeal = blankDeal();
-    const template = dealTemplates.find(t => t.name === 'Main Template') || dealTemplates[0];
-    if (template) {
-      draftDeal.sections = template.sections.map(sec => ({
-        id: uid('sec'),
-        name: sec.name,
-        items: sec.items.map(item => ({ ...item, id: uid('item') }))
-      }));
+    const existing = loadDraftLocally();
+    const canRestore = existing && existing.mode === 'new' && existing.deal;
+    if (canRestore && confirm(`You have an unsaved deal in progress ("${existing.deal.customerName || 'Untitled deal'}") from earlier. Restore it?`)) {
+      draftDeal = existing.deal;
+    } else {
+      if (existing) clearDraftLocally();
+      draftDeal = blankDeal();
+      const template = dealTemplates.find(t => t.name === 'Main Template') || dealTemplates[0];
+      if (template) {
+        draftDeal.sections = template.sections.map(sec => ({
+          id: uid('sec'),
+          name: sec.name,
+          items: sec.items.map(item => ({ ...item, id: uid('item') }))
+        }));
+      }
     }
+    draftMode = 'new';
     submissionChecklistErrors = null;
     currentView = 'form';
+    startDraftAutosave();
     render();
   },
 
@@ -3101,10 +3158,19 @@ const App = {
   editDeal(id) {
     const d = deals.find(x => x.id === id);
     if (!d) return;
-    draftDeal = JSON.parse(JSON.stringify(d));
-    if (!draftDeal.attachments) draftDeal.attachments = [];
+    const existing = loadDraftLocally();
+    const canRestore = existing && existing.mode === 'edit' && existing.dealId === id && existing.deal;
+    if (canRestore && confirm('You have unsaved edits to this deal from earlier. Restore them?')) {
+      draftDeal = existing.deal;
+    } else {
+      if (existing && existing.mode === 'edit' && existing.dealId === id) clearDraftLocally();
+      draftDeal = JSON.parse(JSON.stringify(d));
+      if (!draftDeal.attachments) draftDeal.attachments = [];
+    }
+    draftMode = 'edit';
     submissionChecklistErrors = null;
     currentView = 'form';
+    startDraftAutosave();
     render();
   },
 
@@ -3410,6 +3476,11 @@ const App = {
     const checklist = evaluateSubmissionChecklist(draftDeal);
     if (checklist.length > 0) {
       submissionChecklistErrors = checklist;
+      // Nothing was saved — the draft stays right here (and is autosaved
+      // locally) so a rep who doesn't notice the banner below doesn't lose
+      // their work, but they still need an unmissable heads-up that the
+      // deal did NOT go through.
+      alert("This deal was NOT submitted — it's still missing required information. See the list below for exactly what's needed. Your entries have been saved automatically, so it's safe to come back and finish this later.");
       render();
       const banner = document.getElementById('submission-checklist-banner');
       if (banner) banner.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -3428,12 +3499,18 @@ const App = {
     }
     const saved = draftDeal;
     draftDeal = null;
+    stopDraftAutosave();
+    clearDraftLocally();
     currentView = 'list';
     await saveDeal(saved);
   },
 
   cancelForm() {
+    // Leaving the form (even via Cancel) does NOT clear the autosaved draft —
+    // only a successful submit does. That way nothing typed is ever thrown
+    // away just for navigating off the form.
     draftDeal = null;
+    stopDraftAutosave();
     submissionChecklistErrors = null;
     currentView = 'list';
     render();
@@ -4117,6 +4194,7 @@ function render() {
   else if (currentView === 'material-calc') main.innerHTML = renderMaterialCalculator();
   else if (currentView === 'material-estimate-view') main.innerHTML = renderMaterialEstimateView();
   main.querySelectorAll('textarea.notes-autogrow').forEach(autoGrowTextarea);
+  if (currentView === 'form') persistDraftLocally();
 }
 
 function renderList() {
