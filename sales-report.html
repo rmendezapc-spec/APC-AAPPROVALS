@@ -375,7 +375,7 @@
 </div>
 <header class="topbar">
   <div class="brand">
-    <div class="title">APC Sales Report</div>
+    <div class="title">Sales Report</div>
     <div class="subtitle">Closed deals, materials &amp; pipeline &mdash; from HubSpot</div>
   </div>
   <div class="nav">
@@ -480,6 +480,37 @@
       <div>
         <button class="btn btn-outline btn-small" onclick="App.closeAddDeal()">Cancel</button>
         <button class="btn btn-primary" id="deal-modal-submit-btn" onclick="App.submitDealModal()">Add Deal</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="add-cfi-deal-overlay" class="modal-overlay" onclick="if (event.target === this) App.closeAddCfiDeal();">
+  <div class="modal-card modal-card-wide">
+    <h3>Add a CFI Deal</h3>
+    <p class="panel-sub">Adds one deal to a month on the CFI Monthly Totals ledger. Picking a month that doesn't exist yet creates it.</p>
+    <div class="form-grid">
+      <div><label>Year</label><select id="add-cfi-deal-year"></select></div>
+      <div><label>Month</label><select id="add-cfi-deal-month"></select></div>
+      <div><label>Deal Name</label><input type="text" id="add-cfi-deal-name"></div>
+      <div><label>Close Date</label><input type="text" id="add-cfi-deal-close-date" placeholder="YYYY-MM-DD"></div>
+      <div><label>Amount</label><input type="text" id="add-cfi-deal-amount" placeholder="0.00"></div>
+      <div><label>Material Type</label><input type="text" id="add-cfi-deal-material"></div>
+      <div><label>Deal Owner</label><input type="text" id="add-cfi-deal-owner"></div>
+      <div>
+        <label>Stage</label>
+        <select id="add-cfi-deal-stage">
+          <option value="Closed Won (CFI)">Closed Won</option>
+          <option value="Payment Collected">Payment Collected</option>
+        </select>
+      </div>
+      <div><label>Collected</label><input type="text" id="add-cfi-deal-collected" placeholder="blank = fully collected"></div>
+    </div>
+    <div class="modal-actions">
+      <span class="footnote" id="add-cfi-deal-msg"></span>
+      <div>
+        <button class="btn btn-outline btn-small" onclick="App.closeAddCfiDeal()">Cancel</button>
+        <button class="btn btn-primary" onclick="App.submitAddCfiDeal()">Add Deal</button>
       </div>
     </div>
   </div>
@@ -718,31 +749,50 @@ function subscribeUsers() {
 // month or deal composite, so no new Firestore collection or Rules entry is
 // needed. localStorage is kept only as the pre-cloud-connect / offline cache.
 // ---------------------------------------------------------------------------
+// Order here is the canonical order for a fresh install: all APC tabs
+// (Upload last among them), then all CFI tabs.
 const DEFAULT_TABS = [
   { id: 'overview', label: 'APC Materials' },
-  { id: 'cfi', label: 'CFI' },
+  { id: 'deals', label: 'APC Monthly Totals' },
   { id: 'materials', label: 'Materials' },
-  { id: 'deals', label: 'Deals' },
   { id: 'pipeline', label: 'Pipeline' },
   { id: 'upload', label: 'Upload' },
+  { id: 'cfi', label: 'CFI' },
+  { id: 'cfi-deals', label: 'CFI Monthly Totals' },
 ];
+const HIDDEN_BY_DEFAULT_TAB_IDS = new Set(['materials', 'pipeline']);
 const TAB_CONFIG_OVERRIDE_KEY = '__tabConfig';
 
 function normalizeTabs(saved) {
-  if (!Array.isArray(saved)) return DEFAULT_TABS.map(t => ({ ...t, hidden: false }));
+  if (!Array.isArray(saved)) return DEFAULT_TABS.map(t => ({ ...t, hidden: HIDDEN_BY_DEFAULT_TAB_IDS.has(t.id) }));
   // Merge saved order/labels/hidden with the known tab ids — drops any
   // stale id from an older version, appends any new one at the end (this is
-  // how the new 'cfi' tab reaches everyone who already has a saved config,
+  // how the new CFI tabs reach everyone who already has a saved config,
   // shared or local).
   const byId = new Map(DEFAULT_TABS.map(t => [t.id, t]));
-  const merged = saved.filter(t => byId.has(t.id)).map(t => {
-    // One-time migration: a still-literally-"Overview" label upgrades to the
-    // new "APC Materials" default now that CFI sits alongside it. An admin
-    // who already renamed it to something else keeps their own label.
-    const label = (t.id === 'overview' && t.label === 'Overview') ? byId.get(t.id).label : (t.label || byId.get(t.id).label);
-    return { id: t.id, label, hidden: !!t.hidden };
+  // One-time migration, applied exactly once (detected by 'cfi-deals' not
+  // existing in the saved config yet): "Overview"/"Monthly Totals" labels
+  // upgrade to their new APC-prefixed defaults, Materials/Pipeline hide, and
+  // Upload moves to the end of the APC group — all so the CFI tabs land in
+  // "all APC tabs, then all CFI tabs" order without disturbing anything an
+  // admin customizes afterward (this block never runs again once
+  // 'cfi-deals' is present in the saved config).
+  const migrate = !saved.some(t => t.id === 'cfi-deals');
+  let merged = saved.filter(t => byId.has(t.id)).map(t => {
+    let label = t.label || byId.get(t.id).label;
+    let hidden = !!t.hidden;
+    if (t.id === 'overview' && t.label === 'Overview') label = byId.get(t.id).label;
+    if (migrate) {
+      if (t.id === 'deals' && (t.label === 'Deals' || t.label === 'Monthly Totals')) label = byId.get(t.id).label;
+      if (t.id === 'materials' || t.id === 'pipeline') hidden = true;
+    }
+    return { id: t.id, label, hidden };
   });
-  DEFAULT_TABS.forEach(t => { if (!merged.some(m => m.id === t.id)) merged.push({ ...t, hidden: false }); });
+  if (migrate) {
+    const uploadIdx = merged.findIndex(t => t.id === 'upload');
+    if (uploadIdx !== -1) merged.push(merged.splice(uploadIdx, 1)[0]);
+  }
+  DEFAULT_TABS.forEach(t => { if (!merged.some(m => m.id === t.id)) merged.push({ ...t, hidden: HIDDEN_BY_DEFAULT_TAB_IDS.has(t.id) }); });
   return merged;
 }
 function loadTabs() {
@@ -778,6 +828,11 @@ const state = {
   cfiCollMonth: null,
   cfiCollAmount: '',
   cfiCollNote: '',
+  cfiDealSearch: '',
+  cfiDealMonth: 'all',
+  cfiDealStage: 'all',
+  cfiDealSort: { key: 'closeDate', dir: 'desc' },
+  cfiDealMonthOrder: (() => { try { return localStorage.getItem('sr_cfi_deal_month_order') || 'desc'; } catch (e) { return 'desc'; } })(),
 };
 if (!state.tabs.some(t => t.id === state.tab && !t.hidden)) {
   const firstVisible = state.tabs.find(t => !t.hidden);
@@ -786,11 +841,12 @@ if (!state.tabs.some(t => t.id === state.tab && !t.hidden)) {
 
 // live.mode: 'connecting' | 'cloud' | 'local' (Firebase unreachable/denied —
 // falls back to this browser's localStorage only, see loadLocalFallback()).
-// cfiOverrides/cfiCollections are CFI's counterpart to overrides/collections
-// above — same two Firestore collections, just partitioned out by key/field
-// (see initLiveData) rather than living in their own collections, since CFI
-// is purely manual-entry data with no baked/uploaded deal rows behind it.
-const live = { uploads: {}, collections: [], overrides: {}, cfiOverrides: {}, cfiCollections: [], mode: 'connecting', error: '' };
+// cfiMonths/cfiOverrides/cfiCollections are CFI's counterparts to
+// uploads/overrides/collections above — the same three Firestore
+// collections, just partitioned out by key/field (see initLiveData) rather
+// than living in their own collections, since CFI has no baked HubSpot data
+// and everything about it (including its deal ledger) is entered by hand.
+const live = { uploads: {}, collections: [], overrides: {}, cfiMonths: {}, cfiOverrides: {}, cfiCollections: [], mode: 'connecting', error: '' };
 
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -1370,47 +1426,80 @@ function effectiveYearData(year) {
 
 // ---------------------------------------------------------------------------
 // CFI dashboard data model. Unlike APC Materials above, CFI has no baked
-// HubSpot export and no deal-level upload — every number is entered
-// directly against a month (see cfiMonthlyGridTable's editable cells), so
-// this is a much simpler roll-up: no material/deal ledgers, and (per
-// instruction) no Commission anywhere in it.
+// HubSpot export — every CFI month is "uploaded" in spirit, entered one
+// deal at a time via the CFI Monthly Totals tab's Add Deal — but once a
+// month has deals, its KPIs/grid are DERIVED from them via
+// computeMonthMetrics, exactly like an uploaded APC month. The only manual
+// override is Outstanding (parity with APC's Commission+Outstanding
+// overrides, minus Commission entirely, per instruction).
 // ---------------------------------------------------------------------------
 function cfiCollectionsSumFor(monthKey) {
   return live.cfiCollections.filter(c => c.month === monthKey).reduce((s, c) => s + (Number(c.amount) || 0), 0);
 }
 
 function effectiveCfiMonthly(year) {
-  return MONTH_NAMES.map((mn) => {
-    const monthKey = monthKeyOf(mn, year);
-    const m = live.cfiOverrides[monthKey] || {};
-    const dealAmount = Number(m.dealAmount) || 0;
-    const outstanding = Number(m.outstanding) || 0;
-    const revenue = dealAmount - outstanding;
-    const outstandingCollected = cfiCollectionsSumFor(monthKey);
+  const monthKeys = Object.keys(live.cfiMonths)
+    .filter(k => monthYearOf(k) === String(year))
+    .sort((a, b) => monthSortValue(a) - monthSortValue(b));
+
+  const months = monthKeys.map((monthKey) => {
+    const upload = live.cfiMonths[monthKey];
+    const deals = upload.deals || [];
+    const metrics = computeMonthMetrics(deals);
+    const ov = live.cfiOverrides[monthKey] || {};
+    const outstanding = ov.outstanding != null ? ov.outstanding : metrics.outstanding;
+    const revenue = metrics.dealAmount - outstanding;
+    const outstandingCollected = metrics.outstandingCollectedFromRows + cfiCollectionsSumFor(monthKey);
     const totalCollected = revenue + outstandingCollected;
-    const deals = Number(m.deals) || 0;
     return {
-      month: monthKey, monthLabel: mn,
-      dealAmount, revenue, deals,
-      avgDealSize: deals ? dealAmount / deals : 0,
-      largestDeal: Number(m.largestDeal) || 0,
-      smallestDeal: Number(m.smallestDeal) || 0,
+      month: monthKey, monthLabel: monthNameOf(monthKey),
+      dealAmount: metrics.dealAmount, revenue,
+      deals: metrics.deals, avgDealSize: metrics.avgDealSize,
+      largestDeal: metrics.largestDeal, smallestDeal: metrics.smallestDeal,
       outstanding, outstandingCollected, totalCollected,
     };
   });
+
+  // A collection logged against a month with no CFI deals yet (cash arrives
+  // before the first deal for that month is entered) still needs somewhere
+  // to show up — same fallback as effectiveMonthly's collectionOnlyKeys.
+  const coveredKeys = new Set(months.map(m => m.month));
+  const collectionOnlyKeys = Array.from(new Set(live.cfiCollections.map(c => c.month)))
+    .filter(mk => monthYearOf(mk) === String(year) && !coveredKeys.has(mk));
+  collectionOnlyKeys.forEach((monthKey) => {
+    const ov = live.cfiOverrides[monthKey] || {};
+    const outstandingCollected = cfiCollectionsSumFor(monthKey);
+    months.push({
+      month: monthKey, monthLabel: monthNameOf(monthKey),
+      dealAmount: 0, revenue: 0, deals: 0, avgDealSize: 0, largestDeal: 0, smallestDeal: 0,
+      outstanding: ov.outstanding != null ? ov.outstanding : 0,
+      outstandingCollected, totalCollected: outstandingCollected,
+    });
+  });
+
+  months.sort((a, b) => monthSortValue(a.month) - monthSortValue(b.month));
+  return months;
 }
 
 function effectiveCfiYearData(year) {
   const monthly = effectiveCfiMonthly(year);
+  const monthKeys = Object.keys(live.cfiMonths)
+    .filter(k => monthYearOf(k) === String(year))
+    .sort((a, b) => monthSortValue(a) - monthSortValue(b));
+  const deals = monthKeys.flatMap(k => live.cfiMonths[k].deals || []);
+
+  const wonAmounts = deals.filter(d => d.stage && d.stage.indexOf('Closed Won') === 0).map(d => Number(d.amount) || 0);
+  const positiveWonAmounts = wonAmounts.filter(a => a > 0);
   const totals = monthly.reduce((acc, m) => {
     acc.dealAmount += m.dealAmount; acc.revenue += m.revenue; acc.deals += m.deals;
     acc.outstanding += m.outstanding; acc.outstandingCollected += m.outstandingCollected; acc.totalCollected += m.totalCollected;
-    if (m.largestDeal > acc.largestDeal) acc.largestDeal = m.largestDeal;
-    if (m.smallestDeal > 0 && (acc.smallestDeal === 0 || m.smallestDeal < acc.smallestDeal)) acc.smallestDeal = m.smallestDeal;
     return acc;
-  }, { dealAmount: 0, revenue: 0, deals: 0, outstanding: 0, outstandingCollected: 0, totalCollected: 0, largestDeal: 0, smallestDeal: 0 });
+  }, { dealAmount: 0, revenue: 0, deals: 0, outstanding: 0, outstandingCollected: 0, totalCollected: 0 });
   totals.avgDealSize = totals.deals ? totals.dealAmount / totals.deals : 0;
-  return { year, monthly, totals };
+  totals.largestDeal = wonAmounts.length ? Math.max(...wonAmounts) : 0;
+  totals.smallestDeal = positiveWonAmounts.length ? Math.min(...positiveWonAmounts) : 0;
+
+  return { year, monthly, totals, deals };
 }
 
 // ---------------------------------------------------------------------------
@@ -1424,6 +1513,7 @@ function loadLocalFallback() {
     live.uploads = JSON.parse(localStorage.getItem('sr_uploads') || '{}');
     live.collections = JSON.parse(localStorage.getItem('sr_collections') || '[]');
     live.overrides = JSON.parse(localStorage.getItem('sr_overrides') || '{}');
+    live.cfiMonths = JSON.parse(localStorage.getItem('sr_cfi_months') || '{}');
     live.cfiOverrides = JSON.parse(localStorage.getItem('sr_cfi_overrides') || '{}');
     live.cfiCollections = JSON.parse(localStorage.getItem('sr_cfi_collections') || '[]');
   } catch (e) {}
@@ -1433,6 +1523,7 @@ function saveLocalFallback() {
     localStorage.setItem('sr_uploads', JSON.stringify(live.uploads));
     localStorage.setItem('sr_collections', JSON.stringify(live.collections));
     localStorage.setItem('sr_overrides', JSON.stringify(live.overrides));
+    localStorage.setItem('sr_cfi_months', JSON.stringify(live.cfiMonths));
     localStorage.setItem('sr_cfi_overrides', JSON.stringify(live.cfiOverrides));
     localStorage.setItem('sr_cfi_collections', JSON.stringify(live.cfiCollections));
   } catch (e) {}
@@ -1468,7 +1559,21 @@ async function initLiveData() {
     loadLocalFallback();
     render();
   };
-  window.__srSubscribeUploads((data) => { live.uploads = data; uploadsOk = true; maybeGoCloud(); render(); }, onErr);
+  // CFI's own deal ledger lives in this same salesReportUploads collection —
+  // each CFI month is stored under a 'cfi_'-prefixed doc id, in the exact
+  // same { month, deals, fileName, uploadedAt } shape as an APC uploaded
+  // month, since __srSaveUpload already makes no assumption about which
+  // deals belong to which company.
+  window.__srSubscribeUploads((data) => {
+    const apcUploads = {}, cfiMonths = {};
+    Object.keys(data).forEach((k) => {
+      if (k.indexOf('cfi_') === 0) cfiMonths[k.slice(4)] = data[k];
+      else apcUploads[k] = data[k];
+    });
+    live.uploads = apcUploads;
+    live.cfiMonths = cfiMonths;
+    uploadsOk = true; maybeGoCloud(); render();
+  }, onErr);
   // CFI collection-log entries share the same salesReportCollections
   // documents as APC's — tagged with company:'cfi' rather than living in a
   // separate Firestore collection, so no new collection/rules were needed.
@@ -1526,7 +1631,7 @@ function renderTabs() {
 }
 
 function renderExportToolbar() {
-  if (state.tab === 'upload' || state.tab === 'cfi') return '';
+  if (state.tab === 'upload' || state.tab === 'cfi' || state.tab === 'cfi-deals') return '';
   return `<div class="field-row no-print" style="justify-content:flex-end;">
     <button class="btn btn-outline btn-small" onclick="window.print()">🖨️ Print</button>
     <button class="btn btn-outline btn-small" onclick="App.downloadCurrentTab('csv')">⬇️ CSV</button>
@@ -1540,6 +1645,7 @@ function render() {
   let body = '';
   if (state.tab === 'overview') body = renderOverview();
   else if (state.tab === 'cfi') body = renderCfi();
+  else if (state.tab === 'cfi-deals') body = renderCfiDeals();
   else if (state.tab === 'materials') body = renderMaterials();
   else if (state.tab === 'deals') body = renderDeals();
   else if (state.tab === 'pipeline') body = renderPipeline();
@@ -1549,6 +1655,7 @@ function render() {
   wireUploadControls();
   wireOverviewControls();
   wireCfiControls();
+  wireCfiDealControls();
 }
 
 function wireOverviewControls() {
@@ -1715,13 +1822,14 @@ function renderCfi() {
   </div>
   <div class="panel">
     <h2>Monthly Detail</h2>
-    <p class="panel-sub">${canEdit ? 'CFI has no automated export — click any cell to enter or edit that month\'s numbers directly.' : 'CFI deal and collection totals by month.'}</p>
-    <div class="table-scroll">${cfiMonthlyGridTable(yd, canEdit)}</div>
+    <p class="panel-sub">${months.length === 0 ? 'No CFI deals entered yet — add some on the CFI Monthly Totals tab.' : 'Deal Amount, Deals, and both Deal-size figures come from the CFI Monthly Totals tab\'s deal ledger. Outstanding is editable — click a cell to override it for that month.'}</p>
+    ${months.length === 0 ? '' : `<div class="table-scroll">${cfiMonthlyGridTable(yd, canEdit)}</div>`}
   </div>
+  ${months.length === 0 ? '' : `
   <div class="panel">
     <h2>Outstanding vs Collected</h2>
     <div class="table-scroll">${cfiOutstandingVsCollectedTable(yd)}</div>
-  </div>
+  </div>`}
   ${canEdit ? `
   <div class="panel">
     <h2>Log a CFI Collection</h2>
@@ -1770,24 +1878,25 @@ function cfiMonthlyGridTable(yd, canEdit) {
     const fmt = opts.fmt || (v => money(v));
     return `<tr class="${opts.cls || ''}"><td>${esc(label)}</td>${months.map(m => `<td>${fmt(get(m))}</td>`).join('')}<td class="ytd">${fmt(get(t))}</td></tr>`;
   };
-  const editRow = (label, field, opts) => {
-    opts = opts || {};
-    const fmt = opts.fmt || (v => v.toFixed(2));
-    return `<tr><td>${esc(label)}</td>${months.map(m => `<td><input class="grid-edit cfi-grid-edit" type="text" data-month="${esc(m.month)}" data-field="${field}" value="${fmt(m[field] || 0)}" ${canEdit ? '' : 'disabled'}></td>`).join('')}<td class="ytd">${opts.ytdFmt ? opts.ytdFmt(t[field]) : money(t[field])}</td></tr>`;
+  // Only Outstanding is a manual override here (parity with APC's
+  // Commission+Outstanding overrides, minus Commission) — everything else
+  // is derived from CFI's own deal ledger on the CFI Monthly Totals tab.
+  const editRow = (label, field) => {
+    return `<tr><td>${esc(label)}</td>${months.map(m => `<td><input class="grid-edit cfi-grid-edit" type="text" data-month="${esc(m.month)}" data-field="${field}" value="${(m[field] || 0).toFixed(2)}" ${canEdit ? '' : 'disabled'}></td>`).join('')}<td class="ytd">${money(t[field])}</td></tr>`;
   };
   return `<table class="grid-table">
     <thead><tr><th></th>${months.map(m => `<th>${esc(shortMonth(m.monthLabel).toUpperCase())}</th>`).join('')}<th class="ytd">YTD TOTAL</th></tr></thead>
     <tbody>
-      ${editRow('Deal Amount', 'dealAmount')}
+      ${row('Deal Amount', m => m.dealAmount)}
       ${row('Revenue', m => m.revenue)}
       ${row('Outstanding Collected', m => m.outstandingCollected)}
       ${row('Total Collected', m => m.totalCollected, { cls: 'strong' })}
-      ${editRow('Deals', 'deals', { fmt: v => String(Math.round(v)), ytdFmt: v => num(v) })}
+      ${row('Deals', m => m.deals, { fmt: v => num(v) })}
       ${row('Avg Deal Size', m => m.avgDealSize)}
       ${editRow('Outstanding', 'outstanding')}
       <tr class="spacer"><td colspan="${months.length + 2}">&nbsp;</td></tr>
-      ${editRow('Largest Deal', 'largestDeal')}
-      ${editRow('Smallest Deal', 'smallestDeal')}
+      ${row('Largest Deal', m => m.largestDeal)}
+      ${row('Smallest Deal', m => m.smallestDeal)}
     </tbody>
   </table>`;
 }
@@ -1803,6 +1912,182 @@ function cfiOutstandingVsCollectedTable(yd) {
       ${row('Collected', m => m.totalCollected)}
     </tbody>
   </table>`;
+}
+
+// ---------------------------------------------------------------------------
+// CFI Monthly Totals — CFI's own deal ledger, mirroring the structure of the
+// APC Monthly Totals tab (search/filter/sort, grouped by month with a
+// MONTHLY TOTAL row) but scoped to CFI's deals and simplified: no
+// Freight/Tax columns, no spreadsheet upload/dedup, no per-deal "Record a
+// Payment" (CFI's cash collection stays at the month level via "Log a CFI
+// Collection" on the CFI tab) — CFI has no automated export to reconcile
+// against, so every deal here is added one at a time via + Add Deal.
+// ---------------------------------------------------------------------------
+function getFilteredSortedCfiDeals() {
+  const yd = effectiveCfiYearData(state.year);
+  let rows = yd.deals.filter(d => {
+    if (state.cfiDealMonth !== 'all' && d.month !== state.cfiDealMonth) return false;
+    if (state.cfiDealStage !== 'all' && d.stage !== state.cfiDealStage) return false;
+    if (state.cfiDealSearch) {
+      const q = state.cfiDealSearch.toLowerCase();
+      const hay = `${d.name || ''} ${d.material || ''} ${d.owner || ''}`.toLowerCase();
+      if (hay.indexOf(q) === -1) return false;
+    }
+    return true;
+  });
+  const { key, dir } = state.cfiDealSort;
+  rows = rows.slice().sort((a, b) => {
+    let av = a[key], bv = b[key];
+    if (key === 'closeDate') { av = av || ''; bv = bv || ''; }
+    if (typeof av === 'string') av = av.toLowerCase();
+    if (typeof bv === 'string') bv = bv.toLowerCase();
+    if (av == null) av = '';
+    if (bv == null) bv = '';
+    if (av < bv) return dir === 'asc' ? -1 : 1;
+    if (av > bv) return dir === 'asc' ? 1 : -1;
+    return 0;
+  });
+  return { yd, rows };
+}
+
+function renderCfiDeals() {
+  const { yd, rows } = getFilteredSortedCfiDeals();
+  const monthKeys = Array.from(new Set(yd.deals.map(d => d.month))).sort((a, b) => monthSortValue(a) - monthSortValue(b));
+  const stages = Array.from(new Set(yd.deals.map(d => d.stage))).filter(Boolean);
+  const canEdit = isAdminUser(currentUser);
+
+  const col = (key2, label) => {
+    const sorted = state.cfiDealSort.key === key2;
+    const arrow = sorted ? (state.cfiDealSort.dir === 'asc' ? '↑' : '↓') : '';
+    return `<th class="${sorted ? 'sorted' : ''}" data-cfi-sort-key="${key2}">${label}<span class="arrow">${arrow}</span></th>`;
+  };
+
+  const groupIndex = new Map();
+  rows.forEach(d => {
+    if (!groupIndex.has(d.month)) groupIndex.set(d.month, []);
+    groupIndex.get(d.month).push(d);
+  });
+  const orderMult = state.cfiDealMonthOrder === 'asc' ? 1 : -1;
+  const groups = Array.from(groupIndex.keys())
+    .sort((a, b) => orderMult * (monthSortValue(a) - monthSortValue(b)))
+    .map(mk => ({ month: mk, rows: groupIndex.get(mk) }));
+
+  return `
+  <div class="panel">
+    <div class="field-row no-print">
+      <input type="text" id="cfi-deal-search" placeholder="Search name, material, owner…" value="${esc(state.cfiDealSearch)}">
+      <select id="cfi-deal-month-filter">
+        <option value="all">All months</option>
+        ${monthKeys.map(m => `<option value="${esc(m)}" ${state.cfiDealMonth === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}
+      </select>
+      <select id="cfi-deal-stage-filter">
+        <option value="all">All stages</option>
+        ${stages.map(s => `<option value="${esc(s)}" ${state.cfiDealStage === s ? 'selected' : ''}>${esc(s)}</option>`).join('')}
+      </select>
+      <select id="cfi-deal-month-order-select">
+        <option value="desc" ${state.cfiDealMonthOrder === 'desc' ? 'selected' : ''}>Newest month first</option>
+        <option value="asc" ${state.cfiDealMonthOrder === 'asc' ? 'selected' : ''}>Oldest month first</option>
+      </select>
+      ${canEdit ? `<button class="btn btn-primary btn-small" onclick="App.openAddCfiDeal()">+ Add Deal</button>` : ''}
+      <span class="footnote">${rows.length} of ${yd.deals.length} rows</span>
+    </div>
+    ${groups.length === 0 ? `<div class="empty-state">No CFI deals yet.${canEdit ? ' Click "+ Add Deal" to add the first one.' : ''}</div>` : `
+    <div class="table-scroll">
+      <table class="report" id="cfi-deals-table">
+        <thead><tr>
+          ${col('name', 'Deal Name')}
+          ${col('closeDate', 'Close Date')}
+          ${col('stage', 'Stage')}
+          ${col('material', 'Material')}
+          ${col('owner', 'Owner')}
+          ${col('amount', 'Amount')}
+          ${col('collected', 'Collected')}
+          <th>Outstanding</th>
+          ${canEdit ? '<th></th>' : ''}
+        </tr></thead>
+        <tbody>
+          ${groups.map(g => cfiDealGroupRows(g, canEdit)).join('')}
+        </tbody>
+      </table>
+    </div>`}
+  </div>`;
+}
+
+function cfiDealGroupRows(group, canEdit) {
+  const metrics = computeMonthMetrics(group.rows);
+  const totalCollected = metrics.dealAmount - metrics.outstanding;
+  const colspan = canEdit ? 9 : 8;
+  let out = `<tr class="month-group-header"><td colspan="${colspan}">📅 ${esc(titleCaseMonth(group.month))}</td></tr>`;
+  group.rows.forEach(d => {
+    const collected = d.collected != null ? Number(d.collected) : (Number(d.amount) || 0);
+    const outstanding = (Number(d.amount) || 0) - collected;
+    out += `<tr>
+      <td>${esc(d.name)}</td>
+      <td>${dateStr(d.closeDate)}</td>
+      <td>${stagePill(d.stage)}</td>
+      <td>${esc(d.material || '—')}</td>
+      <td>${esc(d.owner || '—')}</td>
+      <td class="num">${money(d.amount, 2)}</td>
+      <td class="num">${money(collected, 2)}</td>
+      <td class="num">${money(outstanding, 2)}</td>
+      ${canEdit ? `<td><button class="btn btn-outline btn-small" onclick="App.deleteCfiDeal('${esc(group.month)}','${esc(dealKey(d))}')">Delete</button></td>` : ''}
+    </tr>`;
+  });
+  out += `<tr class="month-group-total">
+    <td>MONTHLY TOTAL</td><td></td><td></td><td></td><td></td>
+    <td class="num">${money(metrics.dealAmount)}</td>
+    <td class="num">${money(totalCollected)}</td>
+    <td class="num">${money(metrics.outstanding)}</td>
+    ${canEdit ? '<td></td>' : ''}
+  </tr>`;
+  return out;
+}
+
+function renderCfiDealsOnly() {
+  const main = document.getElementById('main');
+  main.innerHTML = renderTabs() + renderExportToolbar() + renderCfiDeals();
+  wireCfiDealControls();
+  const search = document.getElementById('cfi-deal-search');
+  if (search) {
+    search.focus();
+    search.setSelectionRange(search.value.length, search.value.length);
+  }
+}
+
+function wireCfiDealControls() {
+  const search = document.getElementById('cfi-deal-search');
+  if (search) search.addEventListener('input', () => { state.cfiDealSearch = search.value; renderCfiDealsOnly(); });
+  const monthSel = document.getElementById('cfi-deal-month-filter');
+  if (monthSel) monthSel.addEventListener('change', () => { state.cfiDealMonth = monthSel.value; renderCfiDealsOnly(); });
+  const stageSel = document.getElementById('cfi-deal-stage-filter');
+  if (stageSel) stageSel.addEventListener('change', () => { state.cfiDealStage = stageSel.value; renderCfiDealsOnly(); });
+  const orderSel = document.getElementById('cfi-deal-month-order-select');
+  if (orderSel) orderSel.addEventListener('change', () => {
+    state.cfiDealMonthOrder = orderSel.value;
+    try { localStorage.setItem('sr_cfi_deal_month_order', state.cfiDealMonthOrder); } catch (e) {}
+    renderCfiDealsOnly();
+  });
+  document.querySelectorAll('th[data-cfi-sort-key]').forEach(th => {
+    th.addEventListener('click', () => {
+      const key = th.getAttribute('data-cfi-sort-key');
+      if (state.cfiDealSort.key === key) state.cfiDealSort.dir = state.cfiDealSort.dir === 'asc' ? 'desc' : 'asc';
+      else state.cfiDealSort = { key, dir: key === 'closeDate' ? 'desc' : 'asc' };
+      renderCfiDealsOnly();
+    });
+  });
+}
+
+function populateAddCfiDealMonthOptions() {
+  const yearSel = document.getElementById('add-cfi-deal-year');
+  const monthSel = document.getElementById('add-cfi-deal-month');
+  if (!yearSel.options.length) {
+    yearSel.innerHTML = YEARS.map(y => `<option value="${y}" ${y === state.year ? 'selected' : ''}>${y}</option>`).join('');
+  }
+  const year = yearSel.value || state.year;
+  const cur = currentMonthKey();
+  monthSel.innerHTML = MONTH_NAMES.map(mn => monthKeyOf(mn, year)).map(mk =>
+    `<option value="${mk}" ${mk === cur ? 'selected' : ''}>${titleCaseMonth(mk)}</option>`
+  ).join('');
 }
 
 const MATERIAL_COLORS = ['var(--c-blue)', 'var(--c-orange)', 'var(--c-aqua)', 'var(--c-yellow)', 'var(--c-magenta)', 'var(--c-green)', 'var(--c-violet)', 'var(--c-red)'];
@@ -2793,7 +3078,7 @@ const App = {
     render();
   },
   resetTabs() {
-    state.tabs = DEFAULT_TABS.map(t => ({ ...t, hidden: false }));
+    state.tabs = DEFAULT_TABS.map(t => ({ ...t, hidden: HIDDEN_BY_DEFAULT_TAB_IDS.has(t.id) }));
     saveTabs();
     renderTabSettingsList();
     render();
@@ -2990,21 +3275,95 @@ const App = {
     render();
   },
 
+  openAddCfiDeal() {
+    if (!isAdminUser(currentUser)) { App.openLogin(); return; }
+    populateAddCfiDealMonthOptions();
+    const yearSel = document.getElementById('add-cfi-deal-year');
+    if (!yearSel._wired) {
+      yearSel.addEventListener('change', populateAddCfiDealMonthOptions);
+      yearSel._wired = true;
+    }
+    ['add-cfi-deal-name', 'add-cfi-deal-close-date', 'add-cfi-deal-amount', 'add-cfi-deal-material', 'add-cfi-deal-owner', 'add-cfi-deal-collected'].forEach(id => {
+      document.getElementById(id).value = '';
+    });
+    document.getElementById('add-cfi-deal-stage').value = 'Closed Won (CFI)';
+    document.getElementById('add-cfi-deal-msg').textContent = '';
+    document.getElementById('add-cfi-deal-overlay').classList.add('open');
+    document.body.style.overflow = 'hidden';
+  },
+  closeAddCfiDeal() {
+    document.getElementById('add-cfi-deal-overlay').classList.remove('open');
+    document.body.style.overflow = '';
+  },
+  // CFI's counterpart to submitAddDeal — writes into the same
+  // salesReportUploads collection, just under a 'cfi_'-prefixed doc id (see
+  // initLiveData's partitioning), and skips isBakedMonth entirely since CFI
+  // never has baked HubSpot months to collide with.
+  async submitAddCfiDeal() {
+    const monthKey = document.getElementById('add-cfi-deal-month').value;
+    const name = document.getElementById('add-cfi-deal-name').value.trim();
+    const closeDate = document.getElementById('add-cfi-deal-close-date').value.trim() || null;
+    const amount = parseMoneyCell(document.getElementById('add-cfi-deal-amount').value);
+    const material = document.getElementById('add-cfi-deal-material').value.trim() || null;
+    const owner = document.getElementById('add-cfi-deal-owner').value.trim() || null;
+    const stage = document.getElementById('add-cfi-deal-stage').value;
+    const collectedRaw = document.getElementById('add-cfi-deal-collected').value.trim();
+    const collected = collectedRaw === '' ? null : parseMoneyCell(collectedRaw);
+    const msg = document.getElementById('add-cfi-deal-msg');
+
+    if (!name) { msg.textContent = 'Deal Name is required.'; return; }
+    if (!amount && stage.indexOf('Closed Won') === 0) { msg.textContent = 'Enter an Amount for a Closed Won deal.'; return; }
+
+    const newDeal = { recordId: null, name, closeDate, stage, amount, owner, collected, material, month: monthKey, year: parseInt(monthYearOf(monthKey), 10) };
+    const existing = live.cfiMonths[monthKey];
+    const deals = existing ? existing.deals.concat([newDeal]) : [newDeal];
+    const fileName = existing ? existing.fileName : 'Manually added';
+
+    msg.textContent = 'Saving…';
+    if (live.mode === 'cloud' && window.__srSaveUpload) {
+      const res = await window.__srSaveUpload('cfi_' + monthKey, deals, fileName);
+      if (!res.ok) { msg.textContent = 'Save failed: ' + res.error; return; }
+    } else {
+      live.cfiMonths[monthKey] = { month: monthKey, deals, fileName, uploadedAt: Date.now() };
+      saveLocalFallback();
+    }
+    App.closeAddCfiDeal();
+    render();
+  },
+
+  async deleteCfiDeal(monthKey, key) {
+    if (!isAdminUser(currentUser)) return;
+    if (!confirm('Delete this deal? This cannot be undone.')) return;
+    const existing = live.cfiMonths[monthKey];
+    if (!existing) return;
+    const deals = (existing.deals || []).filter(d => dealKey(d) !== key);
+    if (live.mode === 'cloud' && window.__srSaveUpload) {
+      await window.__srSaveUpload('cfi_' + monthKey, deals, existing.fileName);
+    } else {
+      live.cfiMonths[monthKey] = { ...existing, deals };
+      saveLocalFallback();
+    }
+    render();
+  },
+
   exportBackup() {
     if (!currentUser) return;
-    // CFI's overrides/collections are folded back in here under the same
-    // 'cfi_'-prefixed keys / company:'cfi' tag they're stored with — the
-    // existing import loop below already restores anything keyed that way
-    // correctly, with no CFI-specific logic needed there.
-    const cfiOverridesRekeyed = {};
-    Object.keys(live.cfiOverrides).forEach((k) => { cfiOverridesRekeyed['cfi_' + k] = live.cfiOverrides[k]; });
+    // CFI's months/overrides/collections are folded back in here under the
+    // same 'cfi_'-prefixed keys / company:'cfi' tag they're stored with —
+    // the existing import loop below already restores anything keyed that
+    // way correctly, with no CFI-specific logic needed there.
+    const rekeyed = (obj) => {
+      const out = {};
+      Object.keys(obj).forEach((k) => { out['cfi_' + k] = obj[k]; });
+      return out;
+    };
     const backup = {
       app: 'sales-report',
       version: 1,
       exportedAt: new Date().toISOString(),
-      uploads: live.uploads,
+      uploads: { ...live.uploads, ...rekeyed(live.cfiMonths) },
       collections: live.collections.concat(live.cfiCollections),
-      overrides: { ...live.overrides, ...cfiOverridesRekeyed },
+      overrides: { ...live.overrides, ...rekeyed(live.cfiOverrides) },
     };
     const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -3053,6 +3412,9 @@ const App = {
       if (cloud && window.__srSaveUpload) {
         const res = await window.__srSaveUpload(monthKey, u.deals, u.fileName);
         if (res && res.ok) written++; else failed++;
+      } else if (monthKey.indexOf('cfi_') === 0) {
+        live.cfiMonths[monthKey.slice(4)] = u;
+        written++;
       } else {
         live.uploads[monthKey] = u;
         written++;
