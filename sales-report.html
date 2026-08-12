@@ -749,16 +749,17 @@ function subscribeUsers() {
 // month or deal composite, so no new Firestore collection or Rules entry is
 // needed. localStorage is kept only as the pre-cloud-connect / offline cache.
 // ---------------------------------------------------------------------------
-// Order here is the canonical order for a fresh install: all APC tabs
-// (Upload last among them), then all CFI tabs.
+// Order here is the canonical order for a fresh install — Upload is always
+// last of all (see the "Upload always sits last" invariant in
+// normalizeTabs below, not just this default).
 const DEFAULT_TABS = [
   { id: 'overview', label: 'APC Materials' },
   { id: 'deals', label: 'APC Monthly Totals' },
   { id: 'materials', label: 'Materials' },
   { id: 'pipeline', label: 'Pipeline' },
-  { id: 'upload', label: 'Upload' },
   { id: 'cfi', label: 'CFI' },
   { id: 'cfi-deals', label: 'CFI Monthly Totals' },
+  { id: 'upload', label: 'Upload' },
 ];
 const HIDDEN_BY_DEFAULT_TAB_IDS = new Set(['materials', 'pipeline']);
 const TAB_CONFIG_OVERRIDE_KEY = '__tabConfig';
@@ -772,11 +773,10 @@ function normalizeTabs(saved) {
   const byId = new Map(DEFAULT_TABS.map(t => [t.id, t]));
   // One-time migration, applied exactly once (detected by 'cfi-deals' not
   // existing in the saved config yet): "Overview"/"Monthly Totals" labels
-  // upgrade to their new APC-prefixed defaults, Materials/Pipeline hide, and
-  // Upload moves to the end of the APC group — all so the CFI tabs land in
-  // "all APC tabs, then all CFI tabs" order without disturbing anything an
-  // admin customizes afterward (this block never runs again once
-  // 'cfi-deals' is present in the saved config).
+  // upgrade to their new APC-prefixed defaults, and Materials/Pipeline
+  // hide — all so the CFI tabs land in "all APC tabs, then all CFI tabs"
+  // order without disturbing anything an admin customizes afterward (this
+  // block never runs again once 'cfi-deals' is present in the saved config).
   const migrate = !saved.some(t => t.id === 'cfi-deals');
   let merged = saved.filter(t => byId.has(t.id)).map(t => {
     let label = t.label || byId.get(t.id).label;
@@ -788,11 +788,12 @@ function normalizeTabs(saved) {
     }
     return { id: t.id, label, hidden };
   });
-  if (migrate) {
-    const uploadIdx = merged.findIndex(t => t.id === 'upload');
-    if (uploadIdx !== -1) merged.push(merged.splice(uploadIdx, 1)[0]);
-  }
   DEFAULT_TABS.forEach(t => { if (!merged.some(m => m.id === t.id)) merged.push({ ...t, hidden: HIDDEN_BY_DEFAULT_TAB_IDS.has(t.id) }); });
+  // Upload always sits last, after every other tab including CFI's — a
+  // fixed anchor enforced on every load (not just a one-time migration),
+  // since its correct position kept moving as new tab groups were added.
+  const uploadIdx = merged.findIndex(t => t.id === 'upload');
+  if (uploadIdx !== -1 && uploadIdx !== merged.length - 1) merged.push(merged.splice(uploadIdx, 1)[0]);
   return merged;
 }
 function loadTabs() {
