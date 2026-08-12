@@ -604,8 +604,7 @@
     color: #fff;
     text-align: center;
   }
-  .lightbox-name { font-weight: 600; font-size: 14px; }
-  .lightbox-desc { font-size: 13px; color: #cfd6dd; margin-top: 4px; white-space: pre-wrap; }
+  .lightbox-desc { font-size: 14px; color: #cfd6dd; white-space: pre-wrap; }
   .lightbox-desc:empty::before { content: 'No description'; opacity: 0.5; font-style: italic; }
   .lightbox-counter { font-size: 11.5px; color: #8a94a0; margin-top: 8px; }
   .lightbox-nav {
@@ -911,7 +910,6 @@
   <div class="lightbox-content">
     <img id="lightbox-img" src="" alt="Attachment preview" onclick="closeLightbox()">
     <div class="lightbox-meta">
-      <div id="lightbox-name" class="lightbox-name"></div>
       <div id="lightbox-desc" class="lightbox-desc"></div>
       <div id="lightbox-counter" class="lightbox-counter"></div>
     </div>
@@ -2839,7 +2837,9 @@ function renderLightboxContent() {
   const a = attachments[lightboxState.index];
   const dataUrl = a.dataUrl || attachmentBlobs[a.id] || '';
   document.getElementById('lightbox-img').src = dataUrl;
-  document.getElementById('lightbox-name').textContent = a.name || '';
+  // Deliberately no file name shown here — a rep's typed description is
+  // the useful, human-readable label; the raw filename (e.g. a phone's
+  // auto-generated "Photo Jan 19 2026, 10 52 52 AM.jpg") is just noise.
   document.getElementById('lightbox-desc').textContent = a.description || '';
   document.getElementById('lightbox-counter').textContent = attachments.length > 1 ? `${lightboxState.index + 1} / ${attachments.length}` : '';
   const showNav = attachments.length > 1;
