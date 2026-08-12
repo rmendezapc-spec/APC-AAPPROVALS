@@ -1235,7 +1235,7 @@ function legendRow(items) {
 // Config values the source workbook hardcodes in ~20 formulas — see SPEC.md §1.
 const COMMISSION_RATE = 0.005;
 const COMMISSION_THRESHOLD = 250000;
-const TEXT_OVERRIDE_FIELDS = new Set(['material']);
+const TEXT_OVERRIDE_FIELDS = new Set(['material', 'closeDate']);
 
 // All-or-nothing gate, NOT prorated and NOT applied to only the excess — see
 // SPEC.md §3. Applied uniformly to every month (baked or uploaded) as the
@@ -2177,6 +2177,16 @@ function effectiveDealMaterial(d) {
   if (ov && ov.material != null) return ov.material;
   return d.material || null;
 }
+// Lets a rep/admin hand-correct a Close Date that came in garbled from an
+// export (e.g. a raw Excel serial that normalizeDateCell couldn't rescue).
+// Stored as an override keyed by dealKey — same as Material/Freight/Tax —
+// not a mutation of d.closeDate itself, so the identity dealKey computes
+// from stays stable across edits.
+function effectiveDealCloseDate(d) {
+  const ov = live.overrides[dealKey(d)];
+  if (ov && ov.closeDate != null) return ov.closeDate;
+  return d.closeDate || null;
+}
 function effectiveDealFreight(d) {
   const ov = live.overrides[dealKey(d)];
   if (ov && ov.freight != null) return Number(ov.freight);
@@ -2271,7 +2281,8 @@ function getFilteredSortedDeals() {
 
   const { key, dir } = state.dealSort;
   rows = rows.slice().sort((a, b) => {
-    let av = a[key], bv = b[key];
+    let av = key === 'closeDate' ? effectiveDealCloseDate(a) : a[key];
+    let bv = key === 'closeDate' ? effectiveDealCloseDate(b) : b[key];
     if (key === 'closeDate') { av = av || ''; bv = bv || ''; }
     if (typeof av === 'string') av = av.toLowerCase();
     if (typeof bv === 'string') bv = bv.toLowerCase();
@@ -2388,9 +2399,11 @@ function dealGroupRows(group, yd) {
     const outstandingCell = isWon ? (editCell('outstanding', outstanding.toFixed(2)) || outstandingDisplay) : outstandingDisplay;
     const freightCell = editCell('freight', freight != null ? freight.toFixed(2) : '', '—') || (freight != null ? money(freight, 2) : '—');
     const taxCell = editCell('tax', tax != null ? tax.toFixed(2) : '', '—') || (tax != null ? money(tax, 2) : '—');
+    const closeDate = effectiveDealCloseDate(d);
+    const closeDateCell = editCell('closeDate', esc(closeDate || ''), 'YYYY-MM-DD') || dateStr(closeDate);
     return `<tr>
     <td>${esc(d.name)}</td>
-    <td>${dateStr(d.closeDate)}</td>
+    <td>${closeDateCell}</td>
     <td>${stagePill(d.stage)}</td>
     <td>${materialCell}</td>
     <td>${esc(d.owner || '—')}</td>
@@ -2585,9 +2598,33 @@ const COLUMN_ALIASES = {
   recordId: ['record id', 'id'],
 };
 
+// Some HubSpot/Excel exports lose the Close Date column's date formatting
+// on the way out, leaving the raw Excel/Sheets serial number (days since
+// 1899-12-30, sometimes with a time-of-day fraction) instead of an actual
+// date. Excel's day-1900 epoch, adjusted for the well-known Feb-1900 leap
+// bug, is the standard conversion every spreadsheet tool uses — this
+// matches what Excel/Sheets itself would display for the same serial.
+function excelSerialToISODate(serial) {
+  const utcDays = Math.floor(serial) - 25569;
+  const d = new Date(utcDays * 86400 * 1000);
+  if (isNaN(d)) return null;
+  return d.toISOString().slice(0, 10);
+}
+
 function normalizeDateCell(v) {
   if (v == null || v === '') return null;
   if (v instanceof Date) return v.toISOString().slice(0, 10);
+  // A bare number/numeric string in the plausible date-serial range (roughly
+  // 1954-2064) is never a real Close Date column value on its own — only a
+  // serial that lost its date formatting on export — so it's safe to convert
+  // rather than let the raw number through as a garbled date.
+  if (typeof v === 'number' || (typeof v === 'string' && /^\d+(\.\d+)?$/.test(v.trim()))) {
+    const n = Number(v);
+    if (n > 20000 && n < 60000) {
+      const iso = excelSerialToISODate(n);
+      if (iso) return iso;
+    }
+  }
   const s = String(v).trim();
   const d = new Date(s);
   if (!isNaN(d) && /\d{4}/.test(s)) return d.toISOString().slice(0, 10);
