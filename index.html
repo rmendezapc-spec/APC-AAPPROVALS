@@ -1858,6 +1858,15 @@ function canAddDeals(user) {
   return !!user && user.role !== 'viewer';
 }
 
+// Who can pull a deal back out of Sandy/Connor's queue to fix it: reps (so
+// Fidel etc. can correct a mistake without waiting for a rejection) and
+// approvers (so Sandy/Connor can edit prices on a deal that's currently in
+// front of them for review) — everyone except a plain viewer, same bar as
+// creating a deal in the first place.
+function canEditPendingDeal(user) {
+  return canAddDeals(user);
+}
+
 function money(n) {
   n = Number(n) || 0;
   return '$' + n.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
@@ -1883,6 +1892,100 @@ function formatSubmittedAt(ts) {
     month: 'short', day: 'numeric', year: 'numeric',
     hour: 'numeric', minute: '2-digit'
   }) + ' PT';
+}
+
+// ---------------------------------------------------------------------------
+// Edit history — every resubmission (whether recalled by a rep, edited by
+// an approver reviewing prices, or resubmitted after a rejection) gets
+// diffed against the deal's prior saved state, and anything that actually
+// changed is logged with who/when — see submitDeal() and the Edits tab in
+// renderDetail().
+// ---------------------------------------------------------------------------
+const DEAL_HISTORY_FIELDS = [
+  ['customerName', 'Customer Name'], ['company', 'Company'], ['email', 'Email'],
+  ['repName', 'Rep Name'], ['date', 'Date'],
+  ['address', 'Address'], ['city', 'City'], ['state', 'State'], ['zip', 'Zip'],
+  ['productDesign', 'Product Design'], ['colorFinish', 'Color / Finish'],
+  ['linearFeet', 'Linear Feet'], ['wallHeightSpec', 'Height'],
+  ['panelPostStyle', 'Panel / Post Style'], ['specialRequirements', 'Special Requirements'],
+  ['demoRequirements', 'Demo Requirements'], ['installType', 'Materials vs. Turnkey'],
+  ['clarificationsAssumptions', 'Clarifications & Assumptions'], ['exclusions', 'Exclusions'],
+];
+const JOBSITE_HISTORY_FIELDS = [
+  ['propertyType', 'Property Type'], ['accessDifficulty', 'Site Access'], ['notes', 'Site Notes'],
+];
+const ITEM_HISTORY_FIELDS = [
+  ['desc', 'Description'], ['qty', 'Qty'], ['unit', 'Unit'],
+  ['unitCost', 'Unit Cost'], ['costType', 'Cost Type'], ['markupPercent', 'Markup %'],
+];
+
+function historyFmt(v) {
+  return (v == null || v === '') ? '(blank)' : String(v);
+}
+
+// Returns [{ label, oldValue, newValue }] for everything that changed
+// between two saved versions of the same deal — scalar fields, jobSite,
+// and a line-item-level pass over the cost breakdown (matched by
+// section/item id, so a reordered-but-unchanged item doesn't show as a
+// false change, and adds/removes show as such rather than as edits).
+function diffDealForHistory(oldDeal, newDeal) {
+  const changes = [];
+
+  DEAL_HISTORY_FIELDS.forEach(([field, label]) => {
+    const ov = oldDeal[field], nv = newDeal[field];
+    if ((ov || '') !== (nv || '')) changes.push({ label, oldValue: historyFmt(ov), newValue: historyFmt(nv) });
+  });
+
+  JOBSITE_HISTORY_FIELDS.forEach(([field, label]) => {
+    const ov = (oldDeal.jobSite || {})[field], nv = (newDeal.jobSite || {})[field];
+    if ((ov || '') !== (nv || '')) changes.push({ label, oldValue: historyFmt(ov), newValue: historyFmt(nv) });
+  });
+
+  const oldSections = oldDeal.sections || [];
+  const newSections = newDeal.sections || [];
+  const oldSecById = new Map(oldSections.map(s => [s.id, s]));
+  const newSecById = new Map(newSections.map(s => [s.id, s]));
+
+  newSections.forEach(sec => {
+    const oldSec = oldSecById.get(sec.id);
+    if (!oldSec) {
+      changes.push({ label: 'Cost Breakdown', oldValue: '(none)', newValue: `Added section "${sec.name}"` });
+      return;
+    }
+    if (oldSec.name !== sec.name) changes.push({ label: 'Section Name', oldValue: oldSec.name, newValue: sec.name });
+    const oldItemById = new Map((oldSec.items || []).map(i => [i.id, i]));
+    (sec.items || []).forEach(item => {
+      const oldItem = oldItemById.get(item.id);
+      const itemLabel = item.desc || (oldItem && oldItem.desc) || 'Untitled item';
+      if (!oldItem) {
+        changes.push({ label: `${sec.name} — Line Item`, oldValue: '(none)', newValue: `Added "${itemLabel}" (${money(item.unitCost)}/${item.unit})` });
+        return;
+      }
+      ITEM_HISTORY_FIELDS.forEach(([f, fLabel]) => {
+        const ov = oldItem[f], nv = item[f];
+        if ((ov ?? '') !== (nv ?? '')) {
+          const isMoney = f === 'unitCost';
+          changes.push({
+            label: `${sec.name} — ${itemLabel} — ${fLabel}`,
+            oldValue: isMoney ? money(ov) : historyFmt(ov),
+            newValue: isMoney ? money(nv) : historyFmt(nv),
+          });
+        }
+      });
+    });
+    (oldSec.items || []).forEach(oldItem => {
+      if (!(sec.items || []).some(i => i.id === oldItem.id)) {
+        changes.push({ label: `${sec.name} — Line Item`, oldValue: `Removed "${oldItem.desc || 'Untitled item'}" (${money(oldItem.unitCost)}/${oldItem.unit})`, newValue: '(none)' });
+      }
+    });
+  });
+  oldSections.forEach(oldSec => {
+    if (!newSecById.has(oldSec.id)) {
+      changes.push({ label: 'Cost Breakdown', oldValue: `Removed section "${oldSec.name}"`, newValue: '(none)' });
+    }
+  });
+
+  return changes;
 }
 
 let firebaseSubscribed = false;
@@ -2143,6 +2246,50 @@ function subscribeToMaterialPricingOnce() {
 
 const NOTIFICATION_TYPE_LABELS = { proposal: 'Proposal', handoff: 'Handoff Sheet', engineering: 'Engineering Order', intake: 'Intake Sheet', 'material-estimate': 'Material Estimate' };
 
+// Notifies everyone with a stake in this deal — its rep (matched by name;
+// repName is a free-text field, not tied to a user id, so an unmatched
+// name just means one fewer recipient, not an error) and both fixed
+// approver seats — whenever it's edited, commented on, or
+// approved/rejected. Never notifies whoever just did the thing.
+async function notifyDealStakeholders(d, type, extra) {
+  if (!window.__firebaseSaveNotification) return;
+  const rep = allUsers.find(u => u.name && d.repName && u.name.trim().toLowerCase() === d.repName.trim().toLowerCase());
+  const sandy = allUsers.find(u => u.approverSlot === 'sandy');
+  const connor = allUsers.find(u => u.approverSlot === 'connor');
+  const seen = new Set();
+  for (const recipient of [rep, sandy, connor]) {
+    if (!recipient || seen.has(recipient.id)) continue;
+    seen.add(recipient.id);
+    if (currentUser && recipient.id === currentUser.id) continue;
+    const notification = {
+      id: uid('notif'),
+      recipientId: recipient.id,
+      recipientName: recipient.name,
+      type, // 'edit' | 'comment' | 'approval'
+      dealId: d.id,
+      customerName: d.customerName || 'Untitled deal',
+      fromId: currentUser ? currentUser.id : '',
+      fromName: currentUser ? currentUser.name : '',
+      createdAt: Date.now(),
+      read: false,
+      ...(extra || {})
+    };
+    try { await window.__firebaseSaveNotification(notification); } catch (e) { console.error('Could not send notification:', e); }
+  }
+}
+
+// Full notification line text — the older document-assignment types
+// ("sent you a Proposal for X") read fine generically; edit/comment/
+// approval need their own phrasing since they're not a "sent you a thing".
+function notificationText(n) {
+  const from = `<strong>${esc(n.fromName)}</strong>`;
+  const deal = `<strong>${esc(n.customerName)}</strong>`;
+  if (n.type === 'comment') return `${from} commented on ${deal}`;
+  if (n.type === 'edit') return `${from} edited ${deal}`;
+  if (n.type === 'approval') return `${from} ${esc(n.approvalAction || 'updated their review on')} ${deal}`;
+  return `${from} sent you a ${esc(NOTIFICATION_TYPE_LABELS[n.type] || n.type)} for ${deal}`;
+}
+
 // Live inbox for the logged-in user — scoped by recipientId at the query
 // level (see window.__firebaseSubscribeNotifications) rather than filtered
 // client-side, so this stays cheap as the collection grows across users.
@@ -2179,7 +2326,7 @@ function renderNotifChrome() {
     ? `<div class="notif-empty">No notifications yet.</div>`
     : notifications.map(n => `
       <div class="notif-item ${n.read ? '' : 'unread'}" onclick="App.openNotification('${n.id}')">
-        <div class="notif-text"><strong>${esc(n.fromName)}</strong> sent you a ${esc(NOTIFICATION_TYPE_LABELS[n.type] || n.type)} for <strong>${esc(n.customerName)}</strong></div>
+        <div class="notif-text">${notificationText(n)}</div>
         <div class="notif-time">${new Date(n.createdAt).toLocaleString()}</div>
       </div>`).join('');
 }
@@ -2235,7 +2382,11 @@ function blankDeal() {
     // resumed) for a long time before that actually happens. Updated again
     // on every resubmission after a rejection, so it always reflects the
     // most recent time this deal was put in front of Sandy/Connor.
-    submittedAt: null
+    submittedAt: null,
+    // One entry per resubmission that actually changed something — see
+    // diffDealForHistory, called from submitDeal(). { id, editedBy,
+    // editedAt, changes: [{ label, oldValue, newValue }] }.
+    editHistory: []
   };
 }
 
@@ -3746,9 +3897,22 @@ const App = {
     saved.submittedAt = Date.now();
     const existingIdx = deals.findIndex(d => d.id === saved.id);
     const previousDeal = existingIdx >= 0 ? deals[existingIdx] : null;
+    let hadLoggedEdit = false;
     if (existingIdx >= 0) {
-      // Editing only ever happens on a rejected deal (see the Edit button in
-      // the detail view), so resubmitting always starts a fresh approval round.
+      // Editing happens both on a rejected deal (the Edit button) and on a
+      // pending one recalled by a rep or approver — either way, resubmitting
+      // always starts a fresh approval round, since any edit invalidates
+      // whatever Sandy/Connor already reviewed.
+      const changes = diffDealForHistory(previousDeal, saved);
+      if (changes.length > 0) {
+        hadLoggedEdit = true;
+        saved.editHistory = (saved.editHistory || []).concat([{
+          id: uid('edit'),
+          editedBy: currentUser ? currentUser.name : 'Unknown',
+          editedAt: Date.now(),
+          changes,
+        }]);
+      }
       saved.approvals = { connor: null, sandy: null };
       saved.rejectReasons = { connor: '', sandy: '' };
       deals[existingIdx] = saved;
@@ -3775,6 +3939,7 @@ const App = {
     draftDeal = null;
     stopDraftAutosave();
     clearDraftLocally();
+    if (hadLoggedEdit) await notifyDealStakeholders(saved, 'edit');
   },
 
   cancelForm() {
@@ -3799,6 +3964,7 @@ const App = {
     currentView = 'detail';
     currentDealId = dealId;
     render();
+    await notifyDealStakeholders(d, 'approval', { approvalAction: value ? 'approved' : 'rejected' });
   },
 
   updateRejectReason(dealId, approver, value) {
@@ -3914,6 +4080,12 @@ const App = {
     } else if (n.type === 'material-estimate') {
       currentView = 'material-estimate-view';
       currentEstimateId = n.estimateId;
+    } else if (n.type === 'edit') {
+      currentView = 'detail';
+      detailTab = 'edits';
+    } else if (n.type === 'comment' || n.type === 'approval') {
+      currentView = 'detail';
+      detailTab = 'overview';
     } else {
       currentView = 'detail';
       detailTab = n.type === 'engineering' ? 'engineering' : n.type === 'intake' ? 'intake' : 'handoff';
@@ -4107,6 +4279,7 @@ const App = {
     d.comments.push({ id: uid('cmt'), author: currentUser.name, text, createdAt: Date.now() });
     input.value = '';
     await saveDeal(d);
+    await notifyDealStakeholders(d, 'comment');
   },
 
   // Manage Users is only reachable via goManageUsers, which already checks
@@ -4969,6 +5142,7 @@ function renderDetail() {
   const tabBody = detailTab === 'handoff' ? renderHandoffTab(d, status)
     : detailTab === 'engineering' ? renderEngineeringTab(d)
     : detailTab === 'intake' ? renderIntakeTab(d)
+    : detailTab === 'edits' ? renderEditsTab(d)
     : overviewHtml;
 
   const lifecycle = dealLifecycle(d);
@@ -5005,7 +5179,9 @@ function renderDetail() {
       <button class="btn btn-outline btn-small" onclick="App.setDetailTab('engineering')">Engineering Order</button>
       <button class="btn btn-outline btn-small" onclick="App.setDetailTab('intake')">Intake Sheet</button>
       <button class="btn btn-outline btn-small" onclick="App.goMaterialCalculator('${d.id}')">Material Calculator</button>
-      ${status === 'rejected' ? `<button class="btn btn-outline btn-small" onclick="App.editDeal('${d.id}')">Edit</button>` : ''}
+      ${status === 'rejected' ? `<button class="btn btn-outline btn-small" onclick="App.editDeal('${d.id}')">Edit</button>`
+        : (status === 'pending' && canEditPendingDeal(currentUser)) ? `<button class="btn btn-outline btn-small" onclick="App.editDeal('${d.id}')">Recall &amp; Edit</button>`
+        : ''}
       ${lifecycleButtons}
     </div>
   </div>
@@ -5015,6 +5191,7 @@ function renderDetail() {
     <div class="tab ${detailTab === 'handoff' ? 'active' : ''}" onclick="App.setDetailTab('handoff')">Handoff Sheet</div>
     <div class="tab ${detailTab === 'engineering' ? 'active' : ''}" onclick="App.setDetailTab('engineering')">Engineering Order</div>
     <div class="tab ${detailTab === 'intake' ? 'active' : ''}" onclick="App.setDetailTab('intake')">Intake Sheet</div>
+    <div class="tab ${detailTab === 'edits' ? 'active' : ''}" onclick="App.setDetailTab('edits')">Edits${(d.editHistory && d.editHistory.length) ? ` (${d.editHistory.length})` : ''}</div>
   </div>
 
   ${tabBody}`;
@@ -5384,6 +5561,39 @@ function renderIntakeTab(d) {
     </table>
     </div>
   </div>`;
+}
+
+// Every recall/edit that changed something, newest first — see
+// diffDealForHistory (called from submitDeal) for how each entry's
+// `changes` list gets built.
+function renderEditsTab(d) {
+  const history = d.editHistory || [];
+  if (history.length === 0) {
+    return `<div class="empty-state">
+      <div class="big">No edits yet</div>
+      Any time this deal is recalled and resubmitted with real changes, who made them and exactly what changed will show up here.
+    </div>`;
+  }
+  const entriesHtml = history.slice().sort((a, b) => (b.editedAt || 0) - (a.editedAt || 0)).map(entry => `
+    <div class="panel">
+      <div style="display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:8px;">
+        <strong>${esc(entry.editedBy || 'Unknown')}</strong>
+        <span class="attach-hint">${esc(formatSubmittedAt(entry.editedAt))}</span>
+      </div>
+      <div class="table-scroll" style="margin-top:10px;">
+        <table class="items">
+          <thead><tr><th class="col-desc">Field</th><th>Was</th><th>Now</th></tr></thead>
+          <tbody>
+            ${entry.changes.map(c => `<tr>
+              <td class="col-desc">${esc(c.label)}</td>
+              <td>${esc(c.oldValue)}</td>
+              <td>${esc(c.newValue)}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>`).join('');
+  return entriesHtml;
 }
 
 function renderUsers() {
