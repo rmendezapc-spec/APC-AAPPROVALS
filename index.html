@@ -584,10 +584,62 @@
     padding: 24px;
     cursor: zoom-out;
   }
+  .lightbox-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    max-width: min(900px, 100%);
+    max-height: 100%;
+    cursor: default;
+  }
   #lightbox-overlay img {
     max-width: 100%;
-    max-height: 100%;
+    max-height: 70vh;
     border-radius: 4px;
+    cursor: zoom-out;
+  }
+  .lightbox-meta {
+    width: 100%;
+    margin-top: 14px;
+    color: #fff;
+    text-align: center;
+  }
+  .lightbox-name { font-weight: 600; font-size: 14px; }
+  .lightbox-desc { font-size: 13px; color: #cfd6dd; margin-top: 4px; white-space: pre-wrap; }
+  .lightbox-desc:empty::before { content: 'No description'; opacity: 0.5; font-style: italic; }
+  .lightbox-counter { font-size: 11.5px; color: #8a94a0; margin-top: 8px; }
+  .lightbox-nav {
+    position: fixed;
+    top: 50%;
+    transform: translateY(-50%);
+    background: rgba(255,255,255,0.08);
+    border: none;
+    color: #fff;
+    font-size: 28px;
+    line-height: 1;
+    width: 52px;
+    height: 52px;
+    border-radius: 50%;
+    cursor: pointer;
+    z-index: 1000;
+  }
+  .lightbox-nav:hover { background: rgba(255,255,255,0.18); }
+  .lightbox-prev { left: 16px; }
+  .lightbox-next { right: 16px; }
+  .lightbox-close {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    background: none;
+    border: none;
+    color: #fff;
+    font-size: 30px;
+    line-height: 1;
+    cursor: pointer;
+    z-index: 1000;
+  }
+  @media (max-width: 640px) {
+    .lightbox-nav { width: 40px; height: 40px; font-size: 20px; }
   }
 
   .job-site-summary {
@@ -854,8 +906,18 @@
 
 </div>
 
-<div id="lightbox-overlay" onclick="closeLightbox()">
-  <img id="lightbox-img" src="" alt="Attachment preview">
+<div id="lightbox-overlay" onclick="if (event.target === this) closeLightbox()">
+  <button class="lightbox-nav lightbox-prev" id="lightbox-prev-btn" onclick="event.stopPropagation(); lightboxPrev();">&larr;</button>
+  <div class="lightbox-content">
+    <img id="lightbox-img" src="" alt="Attachment preview" onclick="closeLightbox()">
+    <div class="lightbox-meta">
+      <div id="lightbox-name" class="lightbox-name"></div>
+      <div id="lightbox-desc" class="lightbox-desc"></div>
+      <div id="lightbox-counter" class="lightbox-counter"></div>
+    </div>
+  </div>
+  <button class="lightbox-nav lightbox-next" id="lightbox-next-btn" onclick="event.stopPropagation(); lightboxNext();">&rarr;</button>
+  <button class="lightbox-close" onclick="closeLightbox()" title="Close">&times;</button>
 </div>
 
 <script type="module">
@@ -1811,6 +1873,18 @@ function fullAddressLine(d) {
   return [d.address, cityStateZip].filter(Boolean).join(', ');
 }
 
+// Always shown in Pacific time regardless of the viewer's own device
+// timezone — the business operates out of Los Angeles, and a submission
+// timestamp is only useful if everyone reads it against the same clock.
+function formatSubmittedAt(ts) {
+  if (!ts) return '';
+  return new Date(ts).toLocaleString('en-US', {
+    timeZone: 'America/Los_Angeles',
+    month: 'short', day: 'numeric', year: 'numeric',
+    hour: 'numeric', minute: '2-digit'
+  }) + ' PT';
+}
+
 let firebaseSubscribed = false;
 let openRejectBoxFor = null; // which approver's reject-reason box is open on the current detail view
 
@@ -2155,7 +2229,13 @@ function blankDeal() {
     archivedBy: '',
     trashedAt: null,
     trashedBy: '',
-    createdAt: Date.now()
+    createdAt: Date.now(),
+    // Set by submitDeal() at the moment it actually clears the SOP checklist
+    // and saves — not here, since a draft can sit open (or get autosaved and
+    // resumed) for a long time before that actually happens. Updated again
+    // on every resubmission after a rejection, so it always reflects the
+    // most recent time this deal was put in front of Sandy/Connor.
+    submittedAt: null
   };
 }
 
@@ -2576,15 +2656,74 @@ function compressImageFile(file, maxDim, quality) {
   });
 }
 
-function openLightbox(url) {
-  document.getElementById('lightbox-img').src = url;
+// { source, index } for whichever attachments list the lightbox is
+// currently browsing — re-resolved from `source` on every render rather
+// than holding a stale array reference, so it stays correct even if the
+// underlying deal/draft changes while the lightbox is open.
+let lightboxState = null;
+
+function resolveLightboxAttachments(source) {
+  if (source === 'draft') return (draftDeal && draftDeal.attachments) || [];
+  if (source.indexOf('deal:') === 0) {
+    const d = deals.find(x => x.id === source.slice(5));
+    return (d && d.attachments) || [];
+  }
+  return [];
+}
+
+function openLightbox(source, attId) {
+  const attachments = resolveLightboxAttachments(source);
+  const index = attachments.findIndex(a => a.id === attId);
+  if (index === -1) return;
+  lightboxState = { source, index };
+  renderLightboxContent();
   document.getElementById('lightbox-overlay').style.display = 'flex';
+}
+
+function renderLightboxContent() {
+  if (!lightboxState) return;
+  const attachments = resolveLightboxAttachments(lightboxState.source);
+  if (attachments.length === 0) { closeLightbox(); return; }
+  if (lightboxState.index >= attachments.length) lightboxState.index = attachments.length - 1;
+  const a = attachments[lightboxState.index];
+  const dataUrl = a.dataUrl || attachmentBlobs[a.id] || '';
+  document.getElementById('lightbox-img').src = dataUrl;
+  document.getElementById('lightbox-name').textContent = a.name || '';
+  document.getElementById('lightbox-desc').textContent = a.description || '';
+  document.getElementById('lightbox-counter').textContent = attachments.length > 1 ? `${lightboxState.index + 1} / ${attachments.length}` : '';
+  const showNav = attachments.length > 1;
+  document.getElementById('lightbox-prev-btn').style.display = showNav ? '' : 'none';
+  document.getElementById('lightbox-next-btn').style.display = showNav ? '' : 'none';
+}
+
+function lightboxPrev() {
+  if (!lightboxState) return;
+  const attachments = resolveLightboxAttachments(lightboxState.source);
+  if (attachments.length === 0) return;
+  lightboxState.index = (lightboxState.index - 1 + attachments.length) % attachments.length;
+  renderLightboxContent();
+}
+
+function lightboxNext() {
+  if (!lightboxState) return;
+  const attachments = resolveLightboxAttachments(lightboxState.source);
+  if (attachments.length === 0) return;
+  lightboxState.index = (lightboxState.index + 1) % attachments.length;
+  renderLightboxContent();
 }
 
 function closeLightbox() {
   document.getElementById('lightbox-overlay').style.display = 'none';
   document.getElementById('lightbox-img').src = '';
+  lightboxState = null;
 }
+
+document.addEventListener('keydown', (e) => {
+  if (!lightboxState) return;
+  if (e.key === 'Escape') closeLightbox();
+  else if (e.key === 'ArrowLeft') lightboxPrev();
+  else if (e.key === 'ArrowRight') lightboxNext();
+});
 
 const ATTACHMENT_CATEGORIES = ['Photo', 'Contract', 'Site Plan', 'Other'];
 
@@ -2621,7 +2760,7 @@ function renderAttachmentCard(a, opts) {
   const preview = !dataUrl
     ? `<div class="attachment-thumb attachment-file"><div class="file-icon">⏳</div><div class="file-name">Loading…</div></div>`
     : isImage
-    ? `<div class="attachment-thumb" onclick="openLightbox('${dataUrl}')">
+    ? `<div class="attachment-thumb" onclick="openLightbox('${opts.lightboxSource}', '${a.id}')">
         <img src="${dataUrl}" alt="${esc(a.name)}">
       </div>`
     : `<a class="attachment-thumb attachment-file" href="${dataUrl}" target="_blank" rel="noopener" download="${esc(a.name)}">
@@ -3601,6 +3740,10 @@ const App = {
     }
     submissionChecklistErrors = null;
     const saved = draftDeal;
+    // The moment it actually clears the checklist and saves — not when the
+    // draft was first opened, since autosave/restore means that could have
+    // been hours or days earlier. Updated again on every resubmission.
+    saved.submittedAt = Date.now();
     const existingIdx = deals.findIndex(d => d.id === saved.id);
     const previousDeal = existingIdx >= 0 ? deals[existingIdx] : null;
     if (existingIdx >= 0) {
@@ -4377,6 +4520,7 @@ function renderList() {
         <div class="info">
           <div class="job">${esc(d.customerName || 'Untitled deal')}</div>
           <div class="meta">${esc(fullAddressLine(d) || 'No address')} &middot; Rep: ${esc(d.repName || '—')} &middot; ${esc(d.date || '')}</div>
+          ${d.submittedAt ? `<div class="meta">Submitted ${esc(formatSubmittedAt(d.submittedAt))}</div>` : ''}
           ${lifecycleNote}
         </div>
         <div class="right">
@@ -4463,7 +4607,8 @@ function renderForm() {
   const attachmentsHtml = d.attachments.map(a => renderAttachmentCard(a, {
     categoryOnChange: `App.updateAttachmentCategory('${a.id}', this.value)`,
     descriptionOnChange: `App.updateAttachmentDescription('${a.id}', this.value)`,
-    deleteOnClick: `App.removeAttachment('${a.id}')`
+    deleteOnClick: `App.removeAttachment('${a.id}')`,
+    lightboxSource: 'draft'
   })).join('');
 
   const checklistBannerHtml = !submissionChecklistErrors || submissionChecklistErrors.length === 0 ? '' : `
@@ -4683,7 +4828,8 @@ function renderDetail() {
   const attachmentsHtml = (d.attachments || []).map(a => renderAttachmentCard(a, {
     categoryOnChange: `App.updateAttachmentCategoryOnDeal('${d.id}','${a.id}', this.value)`,
     descriptionOnChange: `App.updateAttachmentDescriptionOnDeal('${d.id}','${a.id}', this.value)`,
-    deleteOnClick: `App.removeAttachmentFromDeal('${d.id}','${a.id}')`
+    deleteOnClick: `App.removeAttachmentFromDeal('${d.id}','${a.id}')`,
+    lightboxSource: 'deal:' + d.id
   })).join('');
 
   const commentsHtml = (d.comments || []).length
@@ -4850,6 +4996,7 @@ function renderDetail() {
       <h2 style="margin-bottom:6px;">${esc(d.customerName)}${d.company ? ' — ' + esc(d.company) : ''}</h2>
       <div style="color:var(--muted); font-size:13.5px;">${esc(fullAddressLine(d))} &middot; Rep: ${esc(d.repName)} &middot; ${esc(d.date)}</div>
       ${d.email ? `<div style="color:var(--muted); font-size:13.5px; margin-top:2px;">${esc(d.email)}</div>` : ''}
+      ${d.submittedAt ? `<div style="color:var(--muted); font-size:13.5px; margin-top:2px;">Submitted for approval ${esc(formatSubmittedAt(d.submittedAt))}</div>` : ''}
     </div>
     <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
       <div class="stamp ${status}">${status}</div>
