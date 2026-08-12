@@ -818,6 +818,7 @@ const state = {
   dealStage: 'all',
   dealSort: { key: 'closeDate', dir: 'desc' },
   dealMonthOrder: (() => { try { return localStorage.getItem('sr_deal_month_order') || 'desc'; } catch (e) { return 'desc'; } })(),
+  uploadCompany: 'apc', // 'apc' | 'cfi' — which company the whole Upload tab is currently pointed at
   uploadYear: null,
   uploadMonth: null,
   uploadParsed: null,
@@ -1033,6 +1034,14 @@ function knownMonthKeys() {
   Object.keys(live.uploads).forEach(k => set.add(k));
   // always include the current calendar month, so a collection can be
   // logged against it even before any deals have been uploaded for it.
+  set.add(currentMonthKey());
+  return Array.from(set).sort((a, b) => monthSortValue(a) - monthSortValue(b));
+}
+
+// CFI's counterpart to knownMonthKeys — no baked years to fold in, since
+// CFI has no HubSpot export at all.
+function knownCfiMonthKeys() {
+  const set = new Set(Object.keys(live.cfiMonths));
   set.add(currentMonthKey());
   return Array.from(set).sort((a, b) => monthSortValue(a) - monthSortValue(b));
 }
@@ -2650,26 +2659,44 @@ function parseUploadFile(file) {
 }
 
 function renderUpload() {
+  const isCfi = state.uploadCompany === 'cfi';
+  const uploadsStore = isCfi ? live.cfiMonths : live.uploads;
+  const collectionsStore = isCfi ? live.cfiCollections : live.collections;
+  const companyLabel = isCfi ? 'CFI' : 'APC Materials';
+
   if (!state.uploadYear) state.uploadYear = state.year;
   const year = state.uploadYear;
-  const bakedKeys = new Set((SALES_DATA.years[year] ? SALES_DATA.years[year].monthNames : []).map(mn => monthKeyOf(mn, year)));
+  // CFI never has baked HubSpot months — every month is always uploadable.
+  const bakedKeys = isCfi ? new Set() : new Set((SALES_DATA.years[year] ? SALES_DATA.years[year].monthNames : []).map(mn => monthKeyOf(mn, year)));
   const targetOptions = MONTH_NAMES.map(mn => monthKeyOf(mn, year));
   if (!state.uploadMonth || monthYearOf(state.uploadMonth) !== String(year)) {
     state.uploadMonth = targetOptions.find(mk => !bakedKeys.has(mk)) || currentMonthKey();
   }
   if (!state.collMonth) state.collMonth = currentMonthKey();
 
-  const existingUploads = Object.keys(live.uploads).sort((a, b) => monthSortValue(b) - monthSortValue(a));
+  const existingUploads = Object.keys(uploadsStore).sort((a, b) => monthSortValue(b) - monthSortValue(a));
   const parsed = state.uploadParsed;
-  const collMonths = knownMonthKeys();
+  const collMonths = isCfi ? knownCfiMonthKeys() : knownMonthKeys();
   const canEdit = isAdminUser(currentUser);
   const noPermNote = `<p class="footnote">Only admins and approvers can upload deals or log collections. <a href="#" onclick="event.preventDefault(); App.openLogin();">Log in</a> to enable this.</p>`;
 
   return `
   ${renderStorageBanner()}
+  <div class="form-grid no-print" style="margin-bottom:4px;">
+    <div>
+      <label>Company</label>
+      <select id="upload-company-select">
+        <option value="apc" ${!isCfi ? 'selected' : ''}>APC Materials</option>
+        <option value="cfi" ${isCfi ? 'selected' : ''}>CFI</option>
+      </select>
+    </div>
+  </div>
   <div class="panel">
-    <h2>Upload Closed Deals</h2>
-    <p class="panel-sub">Upload a spreadsheet of closed deals for a month that isn't already baked into this report (e.g. the current month, as it happens). You can upload multiple files for the same month as more deals close — new deals merge in and duplicates are skipped automatically, matched by Record ID when the file has one. Recognized columns (any order): Deal Name, Close Date, Amount, Material Type, Deal Owner, Record ID (optional — used to catch duplicates across uploads), Stage (optional — defaults to Closed Won; rows marked "Payment Collected" count toward that month's Outstanding Collected instead of a new deal), Collected (optional). Outstanding is always calculated as Amount − Collected, never read from the file.</p>
+    <h2>Upload Closed Deals — ${esc(companyLabel)}</h2>
+    <p class="panel-sub">${isCfi
+      ? 'Upload a spreadsheet of closed CFI deals for a month. You can upload multiple files for the same month as more deals close — new deals merge in and duplicates are skipped automatically, matched by Record ID when the file has one.'
+      : 'Upload a spreadsheet of closed deals for a month that isn\'t already baked into this report (e.g. the current month, as it happens). You can upload multiple files for the same month as more deals close — new deals merge in and duplicates are skipped automatically, matched by Record ID when the file has one.'}
+      Recognized columns (any order): Deal Name, Close Date, Amount, Material Type, Deal Owner, Record ID (optional — used to catch duplicates across uploads), Stage (optional — defaults to Closed Won; rows marked "Payment Collected" count toward that month's Outstanding Collected instead of a new deal), Collected (optional). Outstanding is always calculated as Amount − Collected, never read from the file.</p>
     ${!canEdit ? noPermNote : `
     <div class="form-grid">
       <div>
@@ -2680,7 +2707,7 @@ function renderUpload() {
         <label>Month</label>
         <select id="upload-month-select">
           ${targetOptions.map(mk => {
-            const already = live.uploads[mk];
+            const already = uploadsStore[mk];
             const label = bakedKeys.has(mk) ? ' (already in report)' : (already ? ` (${(already.deals || []).length} deals so far — new ones merge in)` : '');
             return `<option value="${mk}" ${mk === state.uploadMonth ? 'selected' : ''} ${bakedKeys.has(mk) ? 'disabled' : ''}>${titleCaseMonth(mk)}${label}</option>`;
           }).join('')}
@@ -2692,7 +2719,7 @@ function renderUpload() {
       </div>
     </div>`}
     ${(canEdit && parsed) ? (() => {
-      const existingForMonth = (live.uploads[state.uploadMonth] && live.uploads[state.uploadMonth].deals) || [];
+      const existingForMonth = (uploadsStore[state.uploadMonth] && uploadsStore[state.uploadMonth].deals) || [];
       const plan = planDealMerge(existingForMonth, parsed.deals.map(d => ({ ...d, month: state.uploadMonth })));
       const decisions = state.uploadDupeDecisions || {};
       return `
@@ -2738,14 +2765,14 @@ function renderUpload() {
   </div>
 
   <div class="panel">
-    <h2>Uploaded Months</h2>
+    <h2>Uploaded Months — ${esc(companyLabel)}</h2>
     ${existingUploads.length === 0 ? `<div class="empty-state">No months uploaded yet.</div>` : `
     <div class="table-scroll">
       <table class="report">
         <thead><tr><th>Month</th><th style="text-align:right">Deals</th><th style="text-align:right">Total Amount</th><th>Uploaded</th><th>File</th><th></th></tr></thead>
         <tbody>
           ${existingUploads.map(mk => {
-            const u = live.uploads[mk];
+            const u = uploadsStore[mk];
             const won = (u.deals || []).filter(d => d.stage && d.stage.indexOf('Closed Won') === 0);
             const total = won.reduce((s, d) => s + (Number(d.amount) || 0), 0);
             return `<tr>
@@ -2764,8 +2791,8 @@ function renderUpload() {
 
   ${canEdit ? `
   <div class="panel">
-    <h2>Log a Collection</h2>
-    <p class="panel-sub">Record cash collected this month against a deal's outstanding balance from a prior period — adds to that month's Outstanding Collected and Total Collected on the Overview tab.</p>
+    <h2>Log a Collection — ${esc(companyLabel)}</h2>
+    <p class="panel-sub">Record cash collected this month against a deal's outstanding balance from a prior period — adds to that month's Outstanding Collected and Total Collected on the ${isCfi ? 'CFI' : 'Overview'} tab.</p>
     <div class="form-grid">
       <div>
         <label>Month Collected</label>
@@ -2784,13 +2811,13 @@ function renderUpload() {
   </div>` : ''}
 
   <div class="panel">
-    <h2>Collections Log</h2>
-    ${live.collections.length === 0 ? `<div class="empty-state">No collections logged yet.</div>` : `
+    <h2>Collections Log — ${esc(companyLabel)}</h2>
+    ${collectionsStore.length === 0 ? `<div class="empty-state">No collections logged yet.</div>` : `
     <div class="table-scroll">
       <table class="report">
         <thead><tr><th>Month Collected</th><th style="text-align:right">Amount</th><th>Note</th><th>Logged</th><th></th></tr></thead>
         <tbody>
-          ${live.collections.slice().sort((a, b) => (b.enteredAt || 0) - (a.enteredAt || 0)).map(c => `<tr>
+          ${collectionsStore.slice().sort((a, b) => (b.enteredAt || 0) - (a.enteredAt || 0)).map(c => `<tr>
             <td>${esc(titleCaseMonth(c.month))}</td>
             <td class="num">${money(c.amount, 2)}</td>
             <td>${esc(c.note || '—')}</td>
@@ -2804,6 +2831,16 @@ function renderUpload() {
 }
 
 function wireUploadControls() {
+  const companySel = document.getElementById('upload-company-select');
+  if (companySel) companySel.addEventListener('change', () => {
+    state.uploadCompany = companySel.value;
+    state.uploadMonth = null;
+    state.collMonth = null;
+    state.uploadParsed = null;
+    state.uploadDupeDecisions = {};
+    state.uploadMsg = '';
+    renderUploadOnly();
+  });
   const yearSel = document.getElementById('upload-year-select');
   if (yearSel) yearSel.addEventListener('change', () => { state.uploadYear = yearSel.value; state.uploadMonth = null; state.uploadParsed = null; state.uploadDupeDecisions = {}; renderUploadOnly(); });
   const monthSel = document.getElementById('upload-month-select');
@@ -2891,8 +2928,11 @@ const App = {
   async confirmUpload() {
     if (!isAdminUser(currentUser)) { App.openLogin(); return; }
     if (!state.uploadParsed) return;
+    const isCfi = state.uploadCompany === 'cfi';
+    const store = isCfi ? live.cfiMonths : live.uploads;
     const monthKey = state.uploadMonth;
-    const existing = (live.uploads[monthKey] && live.uploads[monthKey].deals) || [];
+    const storageKey = isCfi ? 'cfi_' + monthKey : monthKey;
+    const existing = (store[monthKey] && store[monthKey].deals) || [];
     const parsedDeals = state.uploadParsed.deals.map(d => ({ ...d, month: monthKey, year: parseInt(monthYearOf(monthKey), 10) }));
     const plan = planDealMerge(existing, parsedDeals);
     const decisions = state.uploadDupeDecisions || {};
@@ -2908,10 +2948,10 @@ const App = {
     state.uploadMsg = 'Saving…';
     renderUploadOnly();
     if (live.mode === 'cloud' && window.__srSaveUpload) {
-      const res = await window.__srSaveUpload(monthKey, deals, fileName);
+      const res = await window.__srSaveUpload(storageKey, deals, fileName);
       if (!res.ok) { state.uploadMsg = 'Save failed: ' + res.error; renderUploadOnly(); return; }
     } else {
-      live.uploads[monthKey] = { month: monthKey, deals, fileName, uploadedAt: Date.now() };
+      store[monthKey] = { month: monthKey, deals, fileName, uploadedAt: Date.now() };
       saveLocalFallback();
     }
     state.uploadParsed = null;
@@ -2924,13 +2964,17 @@ const App = {
   async deleteUpload(monthKey) {
     if (!isAdminUser(currentUser)) { App.openLogin(); return; }
     if (!confirm(`Delete the uploaded deals for ${titleCaseMonth(monthKey)}?`)) return;
-    if (live.mode === 'cloud' && window.__srDeleteUpload) await window.__srDeleteUpload(monthKey);
-    else { delete live.uploads[monthKey]; saveLocalFallback(); }
+    const isCfi = state.uploadCompany === 'cfi';
+    const store = isCfi ? live.cfiMonths : live.uploads;
+    const storageKey = isCfi ? 'cfi_' + monthKey : monthKey;
+    if (live.mode === 'cloud' && window.__srDeleteUpload) await window.__srDeleteUpload(storageKey);
+    else { delete store[monthKey]; saveLocalFallback(); }
     render();
   },
 
   async addCollection() {
     if (!isAdminUser(currentUser)) { App.openLogin(); return; }
+    const isCfi = state.uploadCompany === 'cfi';
     const monthSel = document.getElementById('coll-month-select');
     const amountInput = document.getElementById('coll-amount-input');
     const noteInput = document.getElementById('coll-note-input');
@@ -2938,12 +2982,12 @@ const App = {
     const amount = parseMoneyCell(amountInput ? amountInput.value : 0);
     const note = noteInput ? noteInput.value.trim() : '';
     if (!amount) { state.uploadMsg = 'Enter a non-zero amount before logging a collection.'; renderUploadOnly(); return; }
-    const entry = { id: 'col_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8), month, amount, note, enteredAt: Date.now() };
+    const entry = { id: 'col_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8), month, amount, note, enteredAt: Date.now(), ...(isCfi ? { company: 'cfi' } : {}) };
     if (live.mode === 'cloud' && window.__srSaveCollection) {
       const res = await window.__srSaveCollection(entry);
       if (!res.ok) { state.uploadMsg = 'Save failed: ' + res.error; renderUploadOnly(); return; }
     } else {
-      live.collections.push(entry);
+      (isCfi ? live.cfiCollections : live.collections).push(entry);
       saveLocalFallback();
     }
     state.collAmount = ''; state.collNote = '';
@@ -2955,7 +2999,11 @@ const App = {
     if (!isAdminUser(currentUser)) { App.openLogin(); return; }
     if (!confirm('Delete this collection entry?')) return;
     if (live.mode === 'cloud' && window.__srDeleteCollection) await window.__srDeleteCollection(id);
-    else { live.collections = live.collections.filter(c => c.id !== id); saveLocalFallback(); }
+    else {
+      live.collections = live.collections.filter(c => c.id !== id);
+      live.cfiCollections = live.cfiCollections.filter(c => c.id !== id);
+      saveLocalFallback();
+    }
     render();
   },
 
