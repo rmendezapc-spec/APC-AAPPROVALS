@@ -1690,8 +1690,8 @@ function renderOverview() {
   </div>
   <div class="kpi-grid">
     <div class="kpi-card"><div class="kpi-label">Deal Amount</div><div class="kpi-value">${money(kpi.dealAmount)}</div><div class="kpi-sub">${esc(kpiLabel)}</div></div>
-    <div class="kpi-card"><div class="kpi-label">Revenue</div><div class="kpi-value">${money(kpi.revenue)}</div></div>
-    <div class="kpi-card"><div class="kpi-label">Total Collected</div><div class="kpi-value">${money(kpi.totalCollected)}</div><div class="kpi-sub">Outstanding: ${money(kpi.outstanding)}</div></div>
+    <div class="kpi-card"><div class="kpi-label">Outstanding</div><div class="kpi-value">${money(kpi.outstanding)}</div></div>
+    <div class="kpi-card"><div class="kpi-label">Total Collected</div><div class="kpi-value">${money(kpi.totalCollected)}</div></div>
     <div class="kpi-card"><div class="kpi-label">Deals Closed</div><div class="kpi-value">${num(kpi.deals)}</div></div>
     <div class="kpi-card"><div class="kpi-label">Avg Deal Size</div><div class="kpi-value">${money(kpi.avgDealSize)}</div></div>
     <div class="kpi-card"><div class="kpi-label">Commission</div><div class="kpi-value">${money(kpi.commission)}</div></div>
@@ -1803,8 +1803,8 @@ function renderCfi() {
   ${renderStorageBanner()}
   <div class="kpi-grid">
     <div class="kpi-card"><div class="kpi-label">Deal Amount</div><div class="kpi-value">${money(kpi.dealAmount)}</div><div class="kpi-sub">${state.year} YTD</div></div>
-    <div class="kpi-card"><div class="kpi-label">Revenue</div><div class="kpi-value">${money(kpi.revenue)}</div></div>
-    <div class="kpi-card"><div class="kpi-label">Total Collected</div><div class="kpi-value">${money(kpi.totalCollected)}</div><div class="kpi-sub">Outstanding: ${money(kpi.outstanding)}</div></div>
+    <div class="kpi-card"><div class="kpi-label">Outstanding</div><div class="kpi-value">${money(kpi.outstanding)}</div></div>
+    <div class="kpi-card"><div class="kpi-label">Total Collected</div><div class="kpi-value">${money(kpi.totalCollected)}</div></div>
     <div class="kpi-card"><div class="kpi-label">Deals Closed</div><div class="kpi-value">${num(kpi.deals)}</div></div>
     <div class="kpi-card"><div class="kpi-label">Avg Deal Size</div><div class="kpi-value">${money(kpi.avgDealSize)}</div></div>
     <div class="kpi-card"><div class="kpi-label">Largest Deal</div><div class="kpi-value">${money(kpi.largestDeal)}</div><div class="kpi-sub">Smallest: ${money(kpi.smallestDeal)}</div></div>
