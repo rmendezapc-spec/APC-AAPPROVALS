@@ -1825,8 +1825,8 @@ let currentFilter = 'all';
 let draftDeal = null;
 let currentDealId = null;
 let currentEstimateId = null; // which saved Material Estimate is showing in the print/open view
-let detailTab = 'overview'; // 'overview' | 'handoff' | 'engineering' | 'intake' | 'edits' | 'versions', for the deal detail view's tab bar
-let selectedVersionId = null; // which past version is picked in the Versions tab's dropdown, reset on viewDeal()
+let detailTab = 'overview'; // 'overview' | 'handoff' | 'engineering' | 'intake' | 'edits', for the deal detail view's tab bar
+let selectedVersionId = null; // which past version is picked in the Overview tab's Cost Breakdown "compare" dropdown, reset on viewDeal()
 let storageError = false;
 let storageErrorDetail = '';
 // Result of the last failed Submit for Approval attempt — an array of
@@ -5134,6 +5134,7 @@ function renderDetail() {
       <div class="stat"><div class="stat-label">Margin %</div><div class="stat-value">${dealMargin(d).toFixed(1)}%</div></div>
       <div class="stat"><div class="stat-label">Profit $</div><div class="stat-value">${money(dealProfit(d))}</div></div>
     </div>
+    ${versionCompareHtml(d)}
   </div>
 
   <div class="panel">
@@ -5185,7 +5186,6 @@ function renderDetail() {
     : detailTab === 'engineering' ? renderEngineeringTab(d)
     : detailTab === 'intake' ? renderIntakeTab(d)
     : detailTab === 'edits' ? renderEditsTab(d)
-    : detailTab === 'versions' ? renderVersionsTab(d)
     : overviewHtml;
 
   const lifecycle = dealLifecycle(d);
@@ -5235,7 +5235,6 @@ function renderDetail() {
     <div class="tab ${detailTab === 'engineering' ? 'active' : ''}" onclick="App.setDetailTab('engineering')">Engineering Order</div>
     <div class="tab ${detailTab === 'intake' ? 'active' : ''}" onclick="App.setDetailTab('intake')">Intake Sheet</div>
     <div class="tab ${detailTab === 'edits' ? 'active' : ''}" onclick="App.setDetailTab('edits')">Edits${(d.editHistory && d.editHistory.length) ? ` (${d.editHistory.length})` : ''}</div>
-    <div class="tab ${detailTab === 'versions' ? 'active' : ''}" onclick="App.setDetailTab('versions')">Versions${(d.versions && d.versions.length) ? ` (${d.versions.length})` : ''}</div>
   </div>
 
   ${tabBody}`;
@@ -5640,43 +5639,39 @@ function renderEditsTab(d) {
   return entriesHtml;
 }
 
-// A dropdown of every past version (one per edit that actually changed
-// something — see submitDeal), showing the full read-only estimate exactly
-// as it looked right before that edit. The live Overview tab always shows
-// the current estimate; this tab is purely a look-back and never edits
-// anything, so it can't affect the live deal.
-function renderVersionsTab(d) {
+// Lives right inside the Overview tab's own Cost Breakdown panel — a
+// dropdown of every past version (one per edit that actually changed
+// something — see submitDeal) that, once picked, shows that version's line
+// items/totals read-only underneath the CURRENT (always-live) breakdown
+// above it. Returns '' when there's nothing to compare against yet.
+function versionCompareHtml(d) {
   const versions = d.versions || [];
-  if (versions.length === 0) {
-    return `<div class="empty-state">
-      <div class="big">No prior versions yet</div>
-      This estimate hasn't been edited since it was first submitted. Any time it's recalled/edited and resubmitted, a full copy of what it looked like right before that edit is saved here.
-    </div>`;
-  }
+  if (versions.length === 0) return '';
   const versionLabel = (i) => i === 0 ? 'Original Version' : `Version ${i + 1}`;
-  // Default to the most recent past version — the one most likely worth
-  // comparing against what's live now — until the manager picks another.
-  let selectedIdx = versions.findIndex(v => v.id === selectedVersionId);
-  if (selectedIdx === -1) selectedIdx = versions.length - 1;
-  const selected = versions[selectedIdx];
-
   const options = versions.map((v, i) => `
-    <option value="${esc(v.id)}" ${i === selectedIdx ? 'selected' : ''}>${esc(versionLabel(i))} — superseded ${esc(formatSubmittedAt(v.editedAt))} by ${esc(v.editedBy || 'Unknown')}</option>
+    <option value="${esc(v.id)}" ${selectedVersionId === v.id ? 'selected' : ''}>${esc(versionLabel(i))} — superseded ${esc(formatSubmittedAt(v.editedAt))} by ${esc(v.editedBy || 'Unknown')}</option>
   `).join('');
+  const selectedIdx = versions.findIndex(v => v.id === selectedVersionId);
+  const selected = selectedIdx >= 0 ? versions[selectedIdx] : null;
 
   return `
-  <div class="panel">
-    <h2>Versions</h2>
-    <p class="attach-hint" style="margin-top:-6px;">The Overview tab always shows the current, live estimate. Pick an older version below to see exactly what it looked like before a later edit changed it.</p>
-    <select id="version-select" onchange="App.selectVersion(this.value)">${options}</select>
-  </div>
-  ${renderVersionSnapshot(selected.deal, versionLabel(selectedIdx))}`;
+  <div style="margin-top:16px; padding-top:16px; border-top:1px solid var(--border);">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+      <label class="field-label" style="margin-bottom:0;">Compare to a past version</label>
+      <select onchange="App.selectVersion(this.value)">
+        <option value="">— Current only —</option>
+        ${options}
+      </select>
+    </div>
+    ${selected ? renderVersionSnapshot(selected.deal, versionLabel(selectedIdx)) : ''}
+  </div>`;
 }
 
-// Read-only rendering of a past estimate snapshot — deliberately separate
-// from renderDetail()'s live Overview markup (not a shared/refactored
-// function) so this can never accidentally wire up an edit control against
-// stale data; it only ever reads from the snapshot object it's given.
+// Read-only rendering of a past estimate snapshot's cost breakdown —
+// deliberately separate from renderDetail()'s live markup (not a
+// shared/refactored function) so this can never accidentally wire up an
+// edit control against stale data; it only ever reads from the snapshot
+// object it's given.
 function renderVersionSnapshot(snap, label) {
   const sectionsHtml = (snap.sections || []).map(sec => {
     const rows = (sec.items || []).map(item => {
@@ -5718,29 +5713,16 @@ function renderVersionSnapshot(snap, label) {
   }).join('');
 
   return `
-  <div class="panel">
-    <h2>${esc(label)} <span class="attach-hint" style="font-weight:normal;">— read-only, as it looked back then</span></h2>
-    <div class="job-site-summary">
-      <div class="kv"><div class="k">Customer</div><div class="v">${esc(snap.customerName || '—')}</div></div>
-      <div class="kv"><div class="k">Address</div><div class="v">${esc(fullAddressLine(snap) || '—')}</div></div>
-      <div class="kv"><div class="k">Product Design</div><div class="v">${esc(snap.productDesign || '—')}</div></div>
-      <div class="kv"><div class="k">Color / Finish</div><div class="v">${esc(snap.colorFinish || '—')}</div></div>
-      <div class="kv"><div class="k">Linear Feet</div><div class="v">${esc(snap.linearFeet || '—')}</div></div>
-      <div class="kv"><div class="k">Height</div><div class="v">${esc(snap.wallHeightSpec || '—')}</div></div>
-      <div class="kv"><div class="k">Property Type</div><div class="v">${esc((snap.jobSite || {}).propertyType || '—')}</div></div>
-      <div class="kv"><div class="k">Site Access</div><div class="v">${esc((snap.jobSite || {}).accessDifficulty || '—')}</div></div>
-    </div>
-    ${(snap.jobSite || {}).notes ? `<p class="attach-hint" style="margin-top:10px;"><strong>Site Notes:</strong> ${esc(snap.jobSite.notes)}</p>` : ''}
-  </div>
-
-  <div class="panel">
-    <h2>Cost Breakdown</h2>
-    ${sectionsHtml}
-    <div class="totals-bar">
-      <div class="stat"><div class="stat-label">Total Builder Cost</div><div class="stat-value">${money(dealBuilderCost(snap))}</div></div>
-      <div class="stat"><div class="stat-label">Client Price</div><div class="stat-value">${money(dealClientPrice(snap))}</div></div>
-      <div class="stat"><div class="stat-label">Margin %</div><div class="stat-value">${dealMargin(snap).toFixed(1)}%</div></div>
-      <div class="stat"><div class="stat-label">Profit $</div><div class="stat-value">${money(dealProfit(snap))}</div></div>
+  <div class="section-block" style="margin-top:14px;">
+    <div class="section-head"><strong>${esc(label)}</strong> <span class="attach-hint">— read-only, as it looked back then</span></div>
+    <div style="padding:12px;">
+      ${sectionsHtml}
+      <div class="totals-bar" style="margin-top:10px;">
+        <div class="stat"><div class="stat-label">Total Builder Cost</div><div class="stat-value">${money(dealBuilderCost(snap))}</div></div>
+        <div class="stat"><div class="stat-label">Client Price</div><div class="stat-value">${money(dealClientPrice(snap))}</div></div>
+        <div class="stat"><div class="stat-label">Margin %</div><div class="stat-value">${dealMargin(snap).toFixed(1)}%</div></div>
+        <div class="stat"><div class="stat-label">Profit $</div><div class="stat-value">${money(dealProfit(snap))}</div></div>
+      </div>
     </div>
   </div>`;
 }
