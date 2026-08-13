@@ -113,8 +113,10 @@
   header.topbar .brand .subtitle { font-size: 12.5px; color: #9FB0BC; }
   header.topbar .nav { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 10px; }
 
-  .brand-strip { text-align: center; padding: 14px 0 0; }
-  .brand-strip img { max-height: 46px; }
+  .brand-strip { display: flex; align-items: center; justify-content: center; gap: 16px; padding: 14px 0 0; flex-wrap: wrap; }
+  .brand-strip img { max-height: 46px; display: block; }
+  .brand-strip .brand-divider { width: 1px; height: 34px; background: var(--line); }
+  .brand-strip .apc-logo-card { background: #fff; border-radius: 6px; padding: 3px 10px; display: flex; align-items: center; box-shadow: var(--shadow-xs); }
 
   .btn {
     border: 1px solid transparent;
@@ -372,6 +374,8 @@
 
 <div class="brand-strip">
   <img src="fence-installers-logo.png" alt="Fence Installers">
+  <div class="brand-divider"></div>
+  <div class="apc-logo-card"><img src="apc-logo-banner.jpg" alt="American Precast Concrete Inc."></div>
 </div>
 <header class="topbar">
   <div class="brand">
