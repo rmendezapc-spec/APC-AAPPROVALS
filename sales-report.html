@@ -814,7 +814,7 @@ const state = {
   tab: 'overview',
   monthView: 'all',
   dealSearch: '',
-  dealMonth: 'all',
+  dealMonth: null, // null = not yet resolved; renderDeals() defaults it to the current month (falling back to 'all' if the current month has no deals yet)
   dealStage: 'all',
   dealSort: { key: 'closeDate', dir: 'desc' },
   dealMonthOrder: (() => { try { return localStorage.getItem('sr_deal_month_order') || 'desc'; } catch (e) { return 'desc'; } })(),
@@ -2296,6 +2296,14 @@ function getFilteredSortedDeals() {
 }
 
 function renderDeals() {
+  // Default to the current month rather than showing every row at once —
+  // resolved here (not eagerly in state's initial value) so it's checked
+  // against this year's actual deals every time the tab is opened; falls
+  // back to "All months" if the current month has no deals yet.
+  if (state.dealMonth == null) {
+    const cmk = currentMonthKey();
+    state.dealMonth = effectiveYearData(state.year).deals.some(d => d.month === cmk) ? cmk : 'all';
+  }
   const { yd, rows } = getFilteredSortedDeals();
   const monthKeys = Array.from(new Set(yd.deals.map(d => d.month))).sort((a, b) => monthSortValue(a) - monthSortValue(b));
   const stages = Array.from(new Set(yd.deals.map(d => d.stage))).filter(Boolean);
@@ -2933,10 +2941,19 @@ function renderTabSettingsList() {
 // App namespace + init
 // ---------------------------------------------------------------------------
 const App = {
-  goYear(y) { state.year = y; state.monthView = 'all'; render(); },
+  goYear(y) {
+    state.year = y;
+    state.monthView = 'all';
+    // Re-resolve the "default to current month" pick for the newly
+    // selected year too — otherwise switching years while already on APC
+    // Monthly Totals could leave last year's month filter selected, which
+    // usually matches nothing in the new year and shows an empty ledger.
+    if (state.tab === 'deals') state.dealMonth = null;
+    render();
+  },
   goTab(t) {
     state.tab = t;
-    if (t === 'deals') { state.dealSearch = ''; state.dealMonth = 'all'; state.dealStage = 'all'; }
+    if (t === 'deals') { state.dealSearch = ''; state.dealMonth = null; state.dealStage = 'all'; }
     render();
   },
   setMonthView(v) { state.monthView = v; render(); },
