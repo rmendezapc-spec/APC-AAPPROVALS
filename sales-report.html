@@ -982,7 +982,7 @@ function dealsExportRows() {
     const outstanding = effectiveDealOutstanding(d);
     const freight = effectiveDealFreight(d);
     const tax = effectiveDealTax(d);
-    return [d.name, d.closeDate || '', d.stage || '', effectiveDealMaterial(d) || '', d.owner || '', d.amount != null ? d.amount : '', collected, outstanding, freight != null ? freight : '', tax != null ? tax : ''];
+    return [d.name, effectiveDealCloseDate(d) || '', d.stage || '', effectiveDealMaterial(d) || '', d.owner || '', effectiveDealAmount(d), collected, outstanding, freight != null ? freight : '', tax != null ? tax : ''];
   });
   return [header, ...body];
 }
@@ -1255,7 +1255,11 @@ function commissionFor(totalCollected) {
 function computeMonthMetrics(deals) {
   const won = deals.filter(d => d.stage && d.stage.indexOf('Closed Won') === 0);
   const paymentCollected = deals.filter(d => d.stage === 'Payment Collected');
-  const dealAmount = won.reduce((s, d) => s + (Number(d.amount) || 0), 0);
+  // effectiveDealAmount so a per-deal Amount correction (see
+  // effectiveDealAmount/App.saveOverride) flows straight into this month's
+  // Deal Amount/Avg/Largest/Smallest and Outstanding — same base-value-plus-
+  // override pattern as Collected/Material/Freight/Tax.
+  const dealAmount = won.reduce((s, d) => s + effectiveDealAmount(d), 0);
   // A blank/missing Collected value means "fully collected" (Collected ==
   // Amount) in the source sheet's own convention — confirmed against a real
   // month's data, where the ONLY deal contributing to that month's
@@ -1265,13 +1269,13 @@ function computeMonthMetrics(deals) {
   // wildly overstated for any month where most rows just don't bother
   // recording a same-as-amount Collected value.
   const outstanding = won.reduce((s, d) => {
-    const amt = Number(d.amount) || 0;
+    const amt = effectiveDealAmount(d);
     const coll = d.collected != null ? Number(d.collected) : amt;
     return s + (amt - coll);
   }, 0);
   const revenue = dealAmount - outstanding;
   const dealsCount = won.length;
-  const amounts = won.map(d => Number(d.amount) || 0);
+  const amounts = won.map(d => effectiveDealAmount(d));
   const positiveAmounts = amounts.filter(a => a > 0);
   // Outstanding Collected for a month = SUMIF(stage = Payment Collected,
   // collected) among that month's own rows — see SPEC.md §3. This is
@@ -1403,12 +1407,12 @@ function effectiveYearData(year) {
     if (!d.stage || d.stage.indexOf('Closed Won') !== 0) return;
     const ov = live.overrides[dealKey(d)];
     if (!ov || ov.material == null || ov.material === d.material) return;
-    adjustMaterial(d.material, -(Number(d.amount) || 0), -1);
-    adjustMaterial(ov.material, Number(d.amount) || 0, 1);
+    adjustMaterial(d.material, -effectiveDealAmount(d), -1);
+    adjustMaterial(ov.material, effectiveDealAmount(d), 1);
   });
   uploadedDeals.forEach(d => {
     if (!d.stage || d.stage.indexOf('Closed Won') !== 0) return;
-    adjustMaterial(effectiveDealMaterial(d), Number(d.amount) || 0, 1);
+    adjustMaterial(effectiveDealMaterial(d), effectiveDealAmount(d), 1);
   });
   const materials = Array.from(matMap.values()).filter(m => m.deals > 0 || m.amount !== 0);
   const materialsAmountTotal = materials.reduce((s, m) => s + m.amount, 0);
@@ -1422,7 +1426,7 @@ function effectiveYearData(year) {
   // never re-applied to the yearly total — a month under threshold
   // permanently contributes $0, even if the year clears it). Smallest Deal
   // excludes non-positive amounts.
-  const wonAmounts = deals.filter(d => d.stage && d.stage.indexOf('Closed Won') === 0).map(d => Number(d.amount) || 0);
+  const wonAmounts = deals.filter(d => d.stage && d.stage.indexOf('Closed Won') === 0).map(d => effectiveDealAmount(d));
   const positiveWonAmounts = wonAmounts.filter(a => a > 0);
   const totals = monthly.reduce((acc, m) => {
     acc.dealAmount += m.dealAmount; acc.revenue += m.revenue; acc.deals += m.deals;
@@ -2170,10 +2174,19 @@ function dealKey(d) {
 function effectiveDealCollected(d) {
   const ov = live.overrides[dealKey(d)];
   if (ov && ov.collected != null) return Number(ov.collected);
-  return d.collected != null ? Number(d.collected) : (Number(d.amount) || 0);
+  return d.collected != null ? Number(d.collected) : effectiveDealAmount(d);
 }
 function effectiveDealOutstanding(d) {
-  return (Number(d.amount) || 0) - effectiveDealCollected(d);
+  return effectiveDealAmount(d) - effectiveDealCollected(d);
+}
+// Lets a rep/admin hand-correct a Deal Amount that came in wrong from an
+// export — same override mechanism as Material/Freight/Tax/Close Date,
+// keyed by dealKey (which is itself computed from the RAW d.amount, so
+// correcting the amount never shifts the deal's own identity/history).
+function effectiveDealAmount(d) {
+  const ov = live.overrides[dealKey(d)];
+  if (ov && ov.amount != null) return Number(ov.amount);
+  return Number(d.amount) || 0;
 }
 function effectiveDealMaterial(d) {
   const ov = live.overrides[dealKey(d)];
@@ -2209,7 +2222,7 @@ function dealCollectionAdjustment(deals) {
   deals.forEach(d => {
     const ov = live.overrides[dealKey(d)];
     if (!ov || ov.collected == null) return;
-    const amt = Number(d.amount) || 0;
+    const amt = effectiveDealAmount(d);
     const baseCollected = d.collected != null ? Number(d.collected) : amt;
     adj += Number(ov.collected) - baseCollected;
   });
@@ -2284,8 +2297,8 @@ function getFilteredSortedDeals() {
 
   const { key, dir } = state.dealSort;
   rows = rows.slice().sort((a, b) => {
-    let av = key === 'closeDate' ? effectiveDealCloseDate(a) : a[key];
-    let bv = key === 'closeDate' ? effectiveDealCloseDate(b) : b[key];
+    let av = key === 'closeDate' ? effectiveDealCloseDate(a) : key === 'amount' ? effectiveDealAmount(a) : a[key];
+    let bv = key === 'closeDate' ? effectiveDealCloseDate(b) : key === 'amount' ? effectiveDealAmount(b) : b[key];
     if (key === 'closeDate') { av = av || ''; bv = bv || ''; }
     if (typeof av === 'string') av = av.toLowerCase();
     if (typeof bv === 'string') bv = bv.toLowerCase();
@@ -2379,7 +2392,7 @@ function renderDeals() {
 function dealGroupRows(group, yd) {
   const monthRow = yd.monthly.find(m => m.month === group.month);
   const wonRows = group.rows.filter(d => d.stage && d.stage.indexOf('Closed Won') === 0);
-  const wonAmount = wonRows.reduce((s, d) => s + (Number(d.amount) || 0), 0);
+  const wonAmount = wonRows.reduce((s, d) => s + effectiveDealAmount(d), 0);
   let freightTotal = 0, taxTotal = 0, outstandingTotal = 0;
   const gap = monthRow && wonRows.length !== monthRow.deals;
   const gapFlag = gap
@@ -2412,13 +2425,17 @@ function dealGroupRows(group, yd) {
     const taxCell = editCell('tax', tax != null ? tax.toFixed(2) : '', '—') || (tax != null ? money(tax, 2) : '—');
     const closeDate = effectiveDealCloseDate(d);
     const closeDateCell = editCell('closeDate', esc(closeDate || ''), 'YYYY-MM-DD') || dateStr(closeDate);
+    const amount = effectiveDealAmount(d);
+    const amountCell = isWon
+      ? (editCell('amount', amount.toFixed(2)) || money(amount, 2))
+      : (d.amount != null ? money(amount, 2) : '—');
     return `<tr>
     <td>${esc(d.name)}</td>
     <td>${closeDateCell}</td>
     <td>${stagePill(d.stage)}</td>
     <td>${materialCell}</td>
     <td>${esc(d.owner || '—')}</td>
-    <td class="num">${d.amount != null ? money(d.amount, 2) : '—'}</td>
+    <td class="num">${amountCell}</td>
     <td class="num">${collectedCell}</td>
     <td class="num">${outstandingCell}${collectBtn}</td>
     <td class="num">${freightCell}</td>
@@ -2467,7 +2484,7 @@ function wireDealControls() {
         const yd = effectiveYearData(state.year);
         const deal = yd.deals.find(d => dealKey(d) === key);
         if (!deal) return;
-        const amt = Number(deal.amount) || 0;
+        const amt = effectiveDealAmount(deal);
         const enteredOutstanding = inp.value.trim() === '' ? 0 : parseMoneyCell(inp.value);
         App.saveOverride(key, 'collected', amt - enteredOutstanding);
       } else {
@@ -3298,7 +3315,7 @@ const App = {
     if (!deal) { note.textContent = ''; return; }
     const out = effectiveDealOutstanding(deal);
     amountInput.value = out.toFixed(2);
-    note.textContent = `Outstanding on this deal: ${money(out, 2)} (of ${money(Number(deal.amount) || 0, 2)} total).`;
+    note.textContent = `Outstanding on this deal: ${money(out, 2)} (of ${money(effectiveDealAmount(deal), 2)} total).`;
     const monthSel = document.getElementById('payment-month');
     const cur = currentMonthKey();
     const months = knownMonthKeys();
@@ -3353,7 +3370,7 @@ const App = {
     const monthCollected = document.getElementById('payment-month').value;
     if (!amountNow || amountNow <= 0) { msg.textContent = 'Enter an amount greater than 0.'; return; }
 
-    const amt = Number(deal.amount) || 0;
+    const amt = effectiveDealAmount(deal);
     const currentCollected = effectiveDealCollected(deal);
     const remaining = amt - currentCollected;
     const applied = Math.min(amountNow, remaining);
