@@ -2552,13 +2552,16 @@ function dealGroupRows(group, yd) {
     // can still click through to view an already-attached invoice, or —
     // same as every other gated action in this app — gets nudged to log in
     // when they click one that isn't attached yet.
-    const nameOnclick = canEdit
-      ? `App.openAttachInvoice('${esc(k)}')`
-      : (invoice ? `App.viewInvoice('${esc(invoice.id)}')` : `App.openLogin()`);
+    // Wired via data-* + addEventListener (wireDealControls) rather than an
+    // inline onclick with the deal key/name spliced into a JS string
+    // literal — a deal name containing an apostrophe (e.g. 360' for feet)
+    // would otherwise break out of that string once the browser decodes
+    // the HTML-escaped quote back to a literal one, silently killing the
+    // click handler for that one row.
     const nameTitle = canEdit
       ? (invoice ? 'Invoice attached — click to view or replace' : 'Click to attach an invoice PDF')
       : (invoice ? 'Click to view the attached invoice' : 'Log in to attach an invoice');
-    const nameCell = `<a href="#" class="deal-name-link" title="${esc(nameTitle)}" onclick="event.preventDefault(); ${nameOnclick};">${esc(d.name)}${invoice ? ' 📄' : ''}</a>`;
+    const nameCell = `<a href="#" class="deal-name-link" data-deal-key="${esc(k)}" data-invoice-id="${invoice ? esc(invoice.id) : ''}" data-can-edit="${canEdit ? '1' : '0'}" title="${esc(nameTitle)}">${esc(d.name)}${invoice ? ' 📄' : ''}</a>`;
     return `<tr>
     <td>${nameCell}</td>
     <td>${closeDateCell}</td>
@@ -2625,6 +2628,16 @@ function wireDealControls() {
   document.querySelectorAll('.collect-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       App.openAddDeal('payment', btn.getAttribute('data-deal-key'));
+    });
+  });
+  document.querySelectorAll('a.deal-name-link').forEach(a => {
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      const key = a.getAttribute('data-deal-key');
+      const invoiceId = a.getAttribute('data-invoice-id');
+      if (a.getAttribute('data-can-edit') === '1') App.openAttachInvoice(key);
+      else if (invoiceId) App.viewInvoice(invoiceId);
+      else App.openLogin();
     });
   });
 }
