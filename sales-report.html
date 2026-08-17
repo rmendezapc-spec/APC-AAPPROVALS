@@ -2546,17 +2546,19 @@ function dealGroupRows(group, yd) {
       ? (editCell('amount', amount.toFixed(2)) || money(amount, 2))
       : (d.amount != null ? money(amount, 2) : '—');
     const invoice = invoiceForDeal(d);
-    // The whole Deal Name is the click target now (a tiny inline icon/link
-    // was too fiddly to hit) — admins open the Attach Invoice panel either
-    // way; a viewer with no edit rights can still click through directly to
-    // an already-attached invoice, but there's nothing to click if none
-    // exists yet.
+    // The whole Deal Name is the click target (a tiny inline icon/link was
+    // too fiddly to hit) — every name is clickable, never plain dead text:
+    // admins open the Attach Invoice panel; a logged-out/non-admin viewer
+    // can still click through to view an already-attached invoice, or —
+    // same as every other gated action in this app — gets nudged to log in
+    // when they click one that isn't attached yet.
     const nameOnclick = canEdit
       ? `App.openAttachInvoice('${esc(k)}')`
-      : (invoice ? `App.viewInvoice('${esc(invoice.id)}')` : null);
-    const nameCell = nameOnclick
-      ? `<a href="#" class="deal-name-link" title="${invoice ? 'Invoice attached — click to view or replace' : 'Click to attach an invoice PDF'}" onclick="event.preventDefault(); ${nameOnclick};">${esc(d.name)}${invoice ? ' 📄' : ''}</a>`
-      : esc(d.name);
+      : (invoice ? `App.viewInvoice('${esc(invoice.id)}')` : `App.openLogin()`);
+    const nameTitle = canEdit
+      ? (invoice ? 'Invoice attached — click to view or replace' : 'Click to attach an invoice PDF')
+      : (invoice ? 'Click to view the attached invoice' : 'Log in to attach an invoice');
+    const nameCell = `<a href="#" class="deal-name-link" title="${esc(nameTitle)}" onclick="event.preventDefault(); ${nameOnclick};">${esc(d.name)}${invoice ? ' 📄' : ''}</a>`;
     return `<tr>
     <td>${nameCell}</td>
     <td>${closeDateCell}</td>
