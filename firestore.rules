@@ -14,9 +14,10 @@ rules_version = '2';
 // ever needs to be touched after login — which, since PIN is gone, is now all
 // of index.html's collections and the write side of the Sales Report's.
 //
-// Reads on the three salesReport* collections deliberately stay open to
-// anonymous sessions — viewing the Sales Report has always been a no-login-
-// required feature (see SPEC.md), and that's unchanged. The `users` collection
+// Reads on the three salesReport* collections (plus dealInvoices, added
+// later for attached invoice PDFs) deliberately stay open to anonymous
+// sessions — viewing the Sales Report has always been a no-login-required
+// feature (see SPEC.md), and that's unchanged. The `users` collection
 // also keeps open reads (`request.auth != null`, anonymous included) for one
 // specific reason: the pre-login bootstrap in both apps reads the full roster
 // before the Microsoft popup even opens (so the email→account match resolves
@@ -129,6 +130,15 @@ service cloud.firestore {
     // Freight, Tax, Collected, Material Type) and the shared tab layout
     // (keyed '__tabConfig').
     match /salesReportOverrides/{document=**} {
+      allow read: if request.auth != null;
+      allow write: if isRealUser();
+    }
+    // Sales Report — attached invoice PDFs (base64), one document per
+    // invoice, keyed by an app-generated id and linked to its deal via a
+    // dealKey field — split out of salesReportUploads the same reasoning as
+    // dealAttachments above (a PDF inline would routinely exceed the
+    // 1MB-per-document cap on the month doc it'd otherwise live in).
+    match /dealInvoices/{document=**} {
       allow read: if request.auth != null;
       allow write: if isRealUser();
     }
