@@ -282,6 +282,17 @@
     margin-left: 10px; font-weight: 600; text-transform: none; letter-spacing: normal;
     color: #ffd699; font-size: 11.5px; cursor: help;
   }
+  /* The whole Deal Name is the click target for attaching/viewing an
+     invoice — a tiny inline icon/link next to it was too fiddly to hit. */
+  a.deal-name-link {
+    color: inherit; text-decoration: none; border-bottom: 1px dotted var(--muted);
+    cursor: pointer;
+  }
+  a.deal-name-link:hover { border-bottom-style: solid; color: var(--steel); }
+  body.dark a.deal-name-link:hover { color: var(--ink); }
+  @media print {
+    a.deal-name-link { border-bottom: none; }
+  }
   table.report tr.month-group-total td {
     background: var(--panel-alt); font-weight: 700; font-family: var(--mono);
     border-bottom: 2px solid var(--line);
@@ -500,9 +511,10 @@
   <div class="modal-card modal-card-wide">
     <h3>Attach Invoice</h3>
     <p class="panel-sub" id="attach-invoice-sub"></p>
+    <div id="attach-invoice-current" style="margin-bottom: 14px;"></div>
     <div class="form-grid" style="margin-bottom: 14px;">
       <div style="grid-column: 1 / -1;">
-        <label>Invoice (PDF)</label>
+        <label id="attach-invoice-input-label">Invoice (PDF)</label>
         <input type="file" id="attach-invoice-input" accept="application/pdf" onchange="if (this.files[0]) App.handleAttachInvoiceFile(this.files[0]);">
       </div>
     </div>
@@ -2293,6 +2305,31 @@ function invoiceForDeal(d) {
   return matches.length ? matches.sort((a, b) => (b.uploadedAt || 0) - (a.uploadedAt || 0))[0] : null;
 }
 
+// The Attach Invoice modal's "what's already here" panel — a plain DOM
+// update rather than going through the normal #main render cycle, since
+// the modal is static markup that just toggles visible/hidden.
+function renderAttachInvoiceCurrent(dealKeyStr) {
+  const box = document.getElementById('attach-invoice-current');
+  const inputLabel = document.getElementById('attach-invoice-input-label');
+  const yd = effectiveYearData(state.year);
+  const deal = yd.deals.find(d => dealKey(d) === dealKeyStr);
+  const invoice = deal ? invoiceForDeal(deal) : null;
+  if (!invoice) {
+    box.innerHTML = '';
+    inputLabel.textContent = 'Invoice (PDF)';
+    return;
+  }
+  inputLabel.textContent = 'Replace with a different invoice (PDF)';
+  box.innerHTML = `
+    <div class="panel" style="padding:10px 14px; display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+      <span>📄 Currently attached: <strong>${esc(invoice.fileName || 'invoice.pdf')}</strong></span>
+      <span>
+        <button class="btn btn-outline btn-small" onclick="App.viewInvoice('${esc(invoice.id)}')">View</button>
+        <button class="btn btn-outline btn-small" onclick="App.removeAttachedInvoice('${esc(invoice.id)}')">Remove</button>
+      </span>
+    </div>`;
+}
+
 // How much MORE has now been collected on these deals than their base data
 // assumed — this shifts from Outstanding to Revenue for the deals' own
 // (origin) month once a "Collect" action records a payment on them.
@@ -2509,11 +2546,19 @@ function dealGroupRows(group, yd) {
       ? (editCell('amount', amount.toFixed(2)) || money(amount, 2))
       : (d.amount != null ? money(amount, 2) : '—');
     const invoice = invoiceForDeal(d);
-    const invoiceBadge = invoice
-      ? ` <a href="#" class="no-print" title="View attached invoice: ${esc(invoice.fileName || '')}" onclick="event.preventDefault(); App.viewInvoice('${esc(invoice.id)}');">📄</a>${canEdit ? ` <a href="#" class="no-print footnote" onclick="event.preventDefault(); App.deleteInvoice('${esc(invoice.id)}');">✕</a>` : ''}`
-      : (canEdit ? ` <a href="#" class="no-print footnote" title="Attach the invoice PDF for this deal" onclick="event.preventDefault(); App.openAttachInvoice('${esc(k)}');">+📄</a>` : '');
+    // The whole Deal Name is the click target now (a tiny inline icon/link
+    // was too fiddly to hit) — admins open the Attach Invoice panel either
+    // way; a viewer with no edit rights can still click through directly to
+    // an already-attached invoice, but there's nothing to click if none
+    // exists yet.
+    const nameOnclick = canEdit
+      ? `App.openAttachInvoice('${esc(k)}')`
+      : (invoice ? `App.viewInvoice('${esc(invoice.id)}')` : null);
+    const nameCell = nameOnclick
+      ? `<a href="#" class="deal-name-link" title="${invoice ? 'Invoice attached — click to view or replace' : 'Click to attach an invoice PDF'}" onclick="event.preventDefault(); ${nameOnclick};">${esc(d.name)}${invoice ? ' 📄' : ''}</a>`
+      : esc(d.name);
     return `<tr>
-    <td>${esc(d.name)}${invoiceBadge}</td>
+    <td>${nameCell}</td>
     <td>${closeDateCell}</td>
     <td>${stagePill(d.stage)}</td>
     <td>${materialCell}</td>
@@ -3773,6 +3818,7 @@ const App = {
     document.getElementById('attach-invoice-msg').textContent = '';
     document.getElementById('attach-invoice-only-btn').style.display = 'none';
     document.getElementById('attach-invoice-apply-btn').style.display = 'none';
+    renderAttachInvoiceCurrent(dealKeyStr);
     document.getElementById('attach-invoice-overlay').classList.add('open');
     document.body.style.overflow = 'hidden';
   },
@@ -3780,6 +3826,16 @@ const App = {
     document.getElementById('attach-invoice-overlay').classList.remove('open');
     document.body.style.overflow = '';
     attachInvoiceState = null;
+  },
+  async removeAttachedInvoice(invoiceId) {
+    if (!confirm('Remove this attached invoice? This cannot be undone.')) return;
+    if (live.mode === 'cloud' && window.__srDeleteInvoice) await window.__srDeleteInvoice(invoiceId);
+    else { live.invoices = live.invoices.filter(i => i.id !== invoiceId); saveLocalFallback(); }
+    // The modal isn't part of the normal #main render cycle, so its own
+    // "currently attached" panel needs an explicit refresh — the ledger
+    // underneath updates on its own via the live.invoices subscription.
+    if (attachInvoiceState) renderAttachInvoiceCurrent(attachInvoiceState.dealKeyStr);
+    render();
   },
   async handleAttachInvoiceFile(file) {
     if (!attachInvoiceState) return;
@@ -3848,14 +3904,6 @@ const App = {
     const win = window.open();
     if (win) { win.document.write(`<iframe src="${inv.dataUrl}" style="border:0;position:fixed;inset:0;width:100%;height:100%;"></iframe>`); win.document.title = inv.fileName || 'Invoice'; }
   },
-  async deleteInvoice(invoiceId) {
-    if (!isAdminUser(currentUser)) return;
-    if (!confirm('Delete this attached invoice? This cannot be undone.')) return;
-    if (live.mode === 'cloud' && window.__srDeleteInvoice) await window.__srDeleteInvoice(invoiceId);
-    else { live.invoices = live.invoices.filter(i => i.id !== invoiceId); saveLocalFallback(); }
-    render();
-  },
-
   async submitRecordPayment() {
     const key = document.getElementById('payment-deal-select').value;
     const msg = document.getElementById('add-deal-msg');
