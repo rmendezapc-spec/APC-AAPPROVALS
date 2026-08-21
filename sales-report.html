@@ -1391,12 +1391,17 @@ function effectiveMonthly(year) {
     const ov = live.overrides[monthKey] || {};
     // A "Collect" action recorded against one of this month's own deals
     // (paying down its Outstanding, possibly from a much later month) shows
-    // up here as a reduction in Outstanding / increase in Revenue for the
-    // deal's origin month — see SPEC.md §2 and §9.
+    // up here as a reduction in Outstanding for the deal's origin month —
+    // see SPEC.md §2 and §9. Revenue deliberately does NOT get recomputed
+    // from that adjusted Outstanding: the cash is credited to Revenue/Total
+    // Collected (and commission) in the month it was actually collected, via
+    // Outstanding Collected below — anchoring Revenue to baked.revenue keeps
+    // a later payment from also retroactively inflating this origin month's
+    // Revenue, which would double-count that dollar across the two months.
     const monthDeals = base.deals.filter(d => d.month === monthKey);
     const adj = dealCollectionAdjustment(monthDeals);
     const outstanding = ov.outstanding != null ? ov.outstanding : (baked.outstanding - adj);
-    const revenue = baked.dealAmount - outstanding;
+    const revenue = baked.revenue;
     const outstandingCollected = baked.outstandingCollected + collectionsSumFor(monthKey);
     const totalCollected = revenue + outstandingCollected;
     const commission = ov.commission != null ? ov.commission : commissionFor(totalCollected);
@@ -1416,7 +1421,11 @@ function effectiveMonthly(year) {
     const ov = live.overrides[monthKey] || {};
     const adj = dealCollectionAdjustment(uploadDeals);
     const outstanding = ov.outstanding != null ? ov.outstanding : (metrics.outstanding - adj);
-    const revenue = metrics.dealAmount - outstanding;
+    // Same reasoning as the baked branch above: anchor to metrics.revenue
+    // (computed from this month's own deals, unadjusted) rather than
+    // recomputing from the adjusted Outstanding, so a later Collect action
+    // doesn't retroactively inflate this origin month's Revenue.
+    const revenue = metrics.revenue;
     const outstandingCollected = metrics.outstandingCollectedFromRows + collectionsSumFor(monthKey);
     const totalCollected = revenue + outstandingCollected;
     const commission = ov.commission != null ? ov.commission : commissionFor(totalCollected);
