@@ -299,6 +299,13 @@
   }
   table.report tr.month-group-total td:first-child { font-family: var(--sans); }
 
+  /* A payment collected in a month other than the one its deal closed in —
+     shown as a subordinate line under the deal rows, not counted toward
+     this month's own MONTHLY TOTAL (that dollar is already counted via
+     Outstanding Collected — see effectiveMonthly). */
+  table.report tr.collection-child-row td { color: var(--muted); font-style: italic; }
+  table.report tr.collection-child-row td:first-child { padding-left: 26px; }
+
   .mat-bar-row { display: grid; grid-template-columns: 130px 1fr 90px; align-items: center; gap: 10px; margin-bottom: 8px; font-size: 13px; }
   .mat-bar-row .mat-name { text-align: right; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .mat-bar-track { background: var(--panel-alt); border-radius: 3px; overflow: hidden; height: 16px; }
@@ -2446,7 +2453,11 @@ function renderDeals() {
     state.dealMonth = effectiveYearData(state.year).deals.some(d => d.month === cmk) ? cmk : 'all';
   }
   const { yd, rows } = getFilteredSortedDeals();
-  const monthKeys = Array.from(new Set(yd.deals.map(d => d.month))).sort((a, b) => monthSortValue(a) - monthSortValue(b));
+  // Include months that only have a deal-linked collection (no deals of
+  // their own) so the filter can actually target one — see the matching
+  // stand-in-group fallback below.
+  const collectionMonths = live.collections.filter(c => c.dealKey && monthYearOf(c.month) === String(state.year)).map(c => c.month);
+  const monthKeys = Array.from(new Set(yd.deals.map(d => d.month).concat(collectionMonths))).sort((a, b) => monthSortValue(a) - monthSortValue(b));
   const stages = Array.from(new Set(yd.deals.map(d => d.stage))).filter(Boolean);
 
   const col = (key2, label) => {
@@ -2464,6 +2475,13 @@ function renderDeals() {
     if (!groupIndex.has(d.month)) groupIndex.set(d.month, []);
     groupIndex.get(d.month).push(d);
   });
+  // A payment can be collected in a month that has no deals of its own at
+  // all (e.g. every deal closed earlier and this month is pure collections)
+  // — without a stand-in empty group here, dealGroupRows never runs for
+  // that month and the collection has nowhere to render as a line item.
+  Array.from(new Set(collectionMonths))
+    .filter(mk => !groupIndex.has(mk) && (state.dealMonth === 'all' || state.dealMonth === mk))
+    .forEach(mk => groupIndex.set(mk, []));
   const orderMult = state.dealMonthOrder === 'asc' ? 1 : -1;
   const groups = Array.from(groupIndex.keys())
     .sort((a, b) => orderMult * (monthSortValue(a) - monthSortValue(b)))
@@ -2584,6 +2602,39 @@ function dealGroupRows(group, yd) {
     <td class="num">${taxCell}</td>
   </tr>`;
   }).join('');
+  // A "Collect" payment recorded against a deal that closed in a DIFFERENT
+  // month shows up here too, as its own line in the month the cash was
+  // actually collected — linked back to the origin deal via the collection
+  // entry's dealKey (set in submitRecordPayment). Deliberately excluded from
+  // wonAmount/outstandingTotal/freightTotal/taxTotal above and from the
+  // MONTHLY TOTAL row below: that dollar is already counted in this month's
+  // Outstanding Collected (see effectiveMonthly's Revenue/Outstanding
+  // Collected split) — folding it in here too would double-count it again,
+  // the exact bug just fixed at the KPI level.
+  out += live.collections
+    .filter(c => c.month === group.month && c.dealKey)
+    .sort((a, b) => (a.enteredAt || 0) - (b.enteredAt || 0))
+    .map(c => {
+      const originDeal = yd.deals.find(d => dealKey(d) === c.dealKey);
+      const originLabel = originDeal
+        ? `${esc(originDeal.name)} — closed ${esc(titleCaseMonth(originDeal.month))}`
+        : esc(c.note || 'Payment collected');
+      const delBtn = canEdit
+        ? ` <button class="btn btn-outline btn-small no-print" data-collection-id="${esc(c.id)}" title="Delete this collection entry">Delete</button>`
+        : '';
+      return `<tr class="collection-child-row">
+      <td>↳ ${originLabel}</td>
+      <td>—</td>
+      <td><span class="stage-pill stage-payment">Payment Collected</span></td>
+      <td>—</td>
+      <td>—</td>
+      <td class="num">—</td>
+      <td class="num">${money(c.amount, 2)}${delBtn}</td>
+      <td class="num">—</td>
+      <td class="num">—</td>
+      <td class="num">—</td>
+    </tr>`;
+    }).join('');
   out += `<tr class="month-group-total"><td colspan="5">MONTHLY TOTAL (${num(wonRows.length)} deals)</td><td class="num">${money(wonAmount, 2)}</td><td class="num">${money(wonAmount - outstandingTotal, 2)}</td><td class="num">${outstandingTotal ? money(outstandingTotal, 2) : ''}</td><td class="num">${freightTotal ? money(freightTotal, 2) : ''}</td><td class="num">${taxTotal ? money(taxTotal, 2) : ''}</td></tr>`;
   return out;
 }
@@ -2638,6 +2689,9 @@ function wireDealControls() {
     btn.addEventListener('click', () => {
       App.openAddDeal('payment', btn.getAttribute('data-deal-key'));
     });
+  });
+  document.querySelectorAll('[data-collection-id]').forEach(btn => {
+    btn.addEventListener('click', () => App.deleteCollection(btn.getAttribute('data-collection-id')));
   });
   document.querySelectorAll('a.deal-name-link').forEach(a => {
     a.addEventListener('click', (e) => {
@@ -3954,6 +4008,11 @@ const App = {
       month: monthCollected, amount: applied,
       note: `Collected on: ${deal.name} (${titleCaseMonth(deal.month)} deal)`,
       enteredAt: Date.now(),
+      // Links this collection back to the deal it paid down, so the ledger
+      // can show it as its own line item in the month it was collected (see
+      // dealGroupRows) — manual "Log a Collection" entries have no deal to
+      // link to and so never render as a line item there, by design.
+      dealKey: key,
     };
     if (live.mode === 'cloud' && window.__srSaveCollection) {
       const res = await window.__srSaveCollection(entry);
