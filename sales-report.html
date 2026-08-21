@@ -1399,16 +1399,17 @@ function effectiveMonthly(year) {
     // A "Collect" action recorded against one of this month's own deals
     // (paying down its Outstanding, possibly from a much later month) shows
     // up here as a reduction in Outstanding for the deal's origin month —
-    // see SPEC.md §2 and §9. Revenue deliberately does NOT get recomputed
-    // from that adjusted Outstanding: the cash is credited to Revenue/Total
-    // Collected (and commission) in the month it was actually collected, via
-    // Outstanding Collected below — anchoring Revenue to baked.revenue keeps
-    // a later payment from also retroactively inflating this origin month's
-    // Revenue, which would double-count that dollar across the two months.
+    // see SPEC.md §2 and §9. Revenue anchors to baked.revenue plus only the
+    // NON-logged share of that adjustment (a plain inline Collected
+    // correction, not a dated Collect action) — a dated Collect action's
+    // dollar is credited to Revenue/Total Collected/commission in the month
+    // it was actually collected instead (via Outstanding Collected below),
+    // so counting it here too would double it across both months.
     const monthDeals = base.deals.filter(d => d.month === monthKey);
     const adj = dealCollectionAdjustment(monthDeals);
+    const loggedAdj = loggedCollectionAdjustment(monthDeals);
     const outstanding = ov.outstanding != null ? ov.outstanding : (baked.outstanding - adj);
-    const revenue = baked.revenue;
+    const revenue = baked.revenue + (adj - loggedAdj);
     const outstandingCollected = baked.outstandingCollected + collectionsSumFor(monthKey);
     const totalCollected = revenue + outstandingCollected;
     const commission = ov.commission != null ? ov.commission : commissionFor(totalCollected);
@@ -1427,12 +1428,13 @@ function effectiveMonthly(year) {
     const metrics = computeMonthMetrics(uploadDeals);
     const ov = live.overrides[monthKey] || {};
     const adj = dealCollectionAdjustment(uploadDeals);
+    const loggedAdj = loggedCollectionAdjustment(uploadDeals);
     const outstanding = ov.outstanding != null ? ov.outstanding : (metrics.outstanding - adj);
     // Same reasoning as the baked branch above: anchor to metrics.revenue
-    // (computed from this month's own deals, unadjusted) rather than
-    // recomputing from the adjusted Outstanding, so a later Collect action
-    // doesn't retroactively inflate this origin month's Revenue.
-    const revenue = metrics.revenue;
+    // plus only the non-logged share of the adjustment, so a plain inline
+    // Collected correction still flows into Revenue while a dated Collect
+    // action's dollar is left for whichever month it was actually collected.
+    const revenue = metrics.revenue + (adj - loggedAdj);
     const outstandingCollected = metrics.outstandingCollectedFromRows + collectionsSumFor(monthKey);
     const totalCollected = revenue + outstandingCollected;
     const commission = ov.commission != null ? ov.commission : commissionFor(totalCollected);
@@ -2346,9 +2348,13 @@ function renderAttachInvoiceCurrent(dealKeyStr) {
     </div>`;
 }
 
-// How much MORE has now been collected on these deals than their base data
-// assumed — this shifts from Outstanding to Revenue for the deals' own
-// (origin) month once a "Collect" action records a payment on them.
+// How much MORE (or less) has now been collected on these deals than their
+// base data assumed. This ALWAYS reduces Outstanding for the deals' own
+// (origin) month — whether the correction came from a plain inline edit to
+// the Collected cell or from a "Collect" action, less is owed either way.
+// It does NOT tell you which of those two sources caused it, though — both
+// write to the same per-deal "collected" override — so it can't be used
+// directly for Revenue; see loggedCollectionAdjustment below for the split.
 function dealCollectionAdjustment(deals) {
   let adj = 0;
   deals.forEach(d => {
@@ -2359,6 +2365,23 @@ function dealCollectionAdjustment(deals) {
     adj += Number(ov.collected) - baseCollected;
   });
   return adj;
+}
+
+// The portion of dealCollectionAdjustment's delta that's specifically
+// attributable to a dated "Collect" action (i.e. has a matching entry in
+// live.collections), as opposed to a plain inline edit to the Collected
+// cell with no month attached. A dated Collect action's dollar belongs to
+// whichever month it was actually collected in (via Outstanding Collected
+// there), so it must be excluded when computing the ORIGIN month's Revenue —
+// otherwise that same dollar gets counted twice. A plain inline edit has no
+// such log entry, so it's left alone and flows straight into the origin
+// month's Revenue, the same way correcting a wrong Amount would.
+function loggedCollectionAdjustment(deals) {
+  return deals.reduce((sum, d) => {
+    const k = dealKey(d);
+    const logged = live.collections.filter(c => c.dealKey === k).reduce((s, c) => s + (Number(c.amount) || 0), 0);
+    return sum + logged;
+  }, 0);
 }
 
 // ---------------------------------------------------------------------------
