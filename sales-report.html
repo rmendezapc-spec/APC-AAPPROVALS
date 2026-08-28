@@ -899,7 +899,7 @@ const state = {
   year: YEARS[YEARS.length - 1],
   tabs: loadTabs(),
   tab: 'overview',
-  monthView: 'all',
+  monthView: null, // null = not yet resolved; renderOverview() defaults it to the current month (falling back to 'all' if the current month has no data yet) — mirrors dealMonth below
   dealSearch: '',
   dealMonth: null, // null = not yet resolved; renderDeals() defaults it to the current month (falling back to 'all' if the current month has no deals yet)
   dealStage: 'all',
@@ -1789,6 +1789,14 @@ function wireOverviewControls() {
 function renderOverview() {
   const yd = effectiveYearData(state.year);
   const months = yd.monthly;
+  // Default to the current month rather than the full year — resolved here
+  // (not eagerly in state's initial value) so it's checked against this
+  // year's actual months every time the tab is opened; falls back to "Full
+  // Year" if the current month has no data yet. Mirrors renderDeals().
+  if (state.monthView == null) {
+    const cmk = currentMonthKey();
+    state.monthView = months.some(m => m.month === cmk) ? cmk : 'all';
+  }
   const selected = state.monthView !== 'all' ? months.find(m => m.month === state.monthView) : null;
   const kpi = selected || yd.totals;
   const kpiLabel = selected ? titleCaseMonth(selected.month) : (state.year + ' YTD');
@@ -3442,16 +3450,18 @@ function renderTabSettingsList() {
 const App = {
   goYear(y) {
     state.year = y;
-    state.monthView = 'all';
     // Re-resolve the "default to current month" pick for the newly
     // selected year too — otherwise switching years while already on APC
-    // Monthly Totals could leave last year's month filter selected, which
-    // usually matches nothing in the new year and shows an empty ledger.
+    // Materials/Monthly Totals could leave last year's month filter
+    // selected, which usually matches nothing in the new year and shows an
+    // empty ledger/full-year view instead of re-defaulting sensibly.
+    state.monthView = null;
     if (state.tab === 'deals') state.dealMonth = null;
     render();
   },
   goTab(t) {
     state.tab = t;
+    if (t === 'overview') state.monthView = null;
     if (t === 'deals') { state.dealSearch = ''; state.dealMonth = null; state.dealStage = 'all'; }
     render();
   },
